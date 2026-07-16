@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: onboarding-appliance
+Version: 0.1.0
+Summary: An automated tool for employee onboarding tasks, including account creation and data import.
+Author-email: Cameron Cohen <cameron@example.com>
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/cameron-cohen/onboarding-appliance
+Project-URL: Bug Tracker, https://github.com/cameron-cohen/onboarding-appliance/issues
+Requires-Python: >=3.8
+License-File: LICENSE
+Requires-Dist: requests
+Requires-Dist: msal
+Requires-Dist: selenium
+Dynamic: license-file

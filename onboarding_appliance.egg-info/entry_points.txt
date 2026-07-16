@@ -1,0 +1,2 @@
+[console_scripts]
+onboard-app = run:main
