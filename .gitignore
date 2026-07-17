@@ -1,18 +1,32 @@
-# Byte-compiled / optimized / DLL files
+# Python build artifacts
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# C extensions
-*.so
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pkg-resources/
+*.spec
 
-# Virtual Environments
+# Virtual environment
 .venv/
 venv/
-ENV/
 
 # IDE / Editor specific
-.vscode/
 .idea/
+.vscode/
 
-# Credentials - IMPORTANT
+# Credentials (never commit)
 .onboarding_credentials.json
+.onboarding_credentials.json.backup
+
+# Runtime data / logs
+logs/
+*.log
+.downlowd_temp/
+.downlowd_transactions.db
+.downlowd_retention.json
+.downlowd_audit.log

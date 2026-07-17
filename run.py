@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-GUI runner for the employee onboarding appliance.
+GUI runner for the employee onboarding pipeline.
+
+Prefer:  .venv/bin/python run.py
+Or:      ./run.py   (after chmod +x; uses PATH python3)
 """
 
 from gui import AppGUI

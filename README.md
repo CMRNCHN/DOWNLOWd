@@ -1,123 +1,76 @@
 # DOWNLOWD - Employee Onboarding Appliance
 
-An automated desktop tool for streamlining new employee onboarding tasks. The application monitors the Downloads folder for specific employee data files, converts them for Bitwarden import, and automates the creation of M365, Hyatt, and Marriott accounts.
+An automated desktop tool for streamlining new employee onboarding tasks. The application monitors the Downloads folder for specific employee data files, converts them for Bitwarden import, optionally opens partner signup pages, and includes local transaction logging for company card expenses.
 
-## Features
+## Security Features
 
-- **File Monitoring**: Automatically detects new employee data files (`HQ-*.txt`, `HQ-*.rtf`) in the Downloads folder.
-- **Bitwarden Integration**: Converts employee data into Bitwarden-compatible JSON and imports it into a specified collection.
-- **Account Provisioning**:
-  - Creates Microsoft 365 user mailboxes via Graph API.
-  - Creates Hyatt and Marriott loyalty accounts via browser automation.
-- **Secure File Handling**: Securely deletes local data files after processing.
-- **Interactive GUI**: A user-friendly interface to control and monitor the onboarding process, with toggles for each task.
+- **Bitwarden is the gate** — unlock the app with your Bitwarden email + master password (no separate app password)
+- **macOS Keychain** — stores settings and remembered Bitwarden email
+- **Transaction Logging** — local SQLite with owner-only (`0o600`) permissions — **not encrypted at rest** (FileVault recommended)
+- **Local disposal modes** — standard unlink, overwrite-then-delete, or best-effort secure erase (APFS/SSD: FileVault is the real protection)
+- **Automated Data Retention** — 5/10/15/20 day lifecycle
+- **Audit logging** — auth, imports, transactions, retention, config
 
----
+See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for details.
 
-## Installation and Setup
+## Onboarding Workflow
 
-### Automated Setup (macOS)
+1. **Sign in** with Bitwarden
+2. **Intake** — drop/browse `HQ-*.txt` / `HQ-*.rtf` into the queue
+3. **Shared passphrase** — one passphrase for every new employee login (they change it later)
+4. **Run full onboarding** — convert → Bitwarden import → Outlook/Hyatt/Marriott autofill → dispose local files
+5. **Usernames** — `firstnamelastnameYEAR` (birth year)
 
-For macOS users, the easiest way to install all dependencies is to run the provided setup script. This will install Homebrew (if not present), system tools, and all required Python packages.
+### First launch
 
-1.  **Make the script executable**:
-    ```bash
-    chmod +x setup.sh
-    ```
-2.  **Run the script**:
-    ```bash
-    ./setup.sh
-    ```
+1. Sign in with Bitwarden (email + master password, + 2FA if enabled)
+2. Enter the **shared employee passphrase** and confirm the Bitwarden **collection**
+3. Queue HQ files, then **Run full onboarding**
+4. Configure disposal / partner toggles under **Settings**
 
-After the script finishes, follow the final instructions printed in your terminal to run the application.
+## Developer Setup
 
-### Manual Setup
+### Automated (macOS)
 
-Follow these steps to set up the development environment for the application.
+```bash
+chmod +x setup.sh
+./setup.sh
+```
 
-### 1. Prerequisites
+### Manual
 
-Before you begin, ensure you have the following installed on your system:
+1. Python 3.8+ with Tkinter (`brew install python-tk` on macOS)
+2. Bitwarden CLI
+3. Clone and install:
 
-- **Python 3.8+ with Tkinter**:
-  - **macOS**: The recommended way to install Python is with Homebrew. This ensures `tkinter` is included.
-    ```bash
-    brew install python-tk
-    ```
-  - **Windows/Linux**: Standard Python installers typically include Tkinter.
+```bash
+git clone https://github.com/CMRNCHN/DOWNLOWd.git
+cd DOWNLOWd
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
 
-- **Bitwarden CLI**: The application requires the `bw` command-line tool. Follow the official installation guide.
+### Run
 
-- **ChromeDriver**: The browser automation for partner accounts requires `chromedriver`. Ensure it is installed and accessible in your system's `PATH`.
+```bash
+python3 run.py
+```
 
-### 2. Setup Instructions
+Unlock/login happens inside the app; the CLI session key is kept in memory and passed to subsequent `bw` calls via `BW_SESSION`.
 
-1.  **Clone the Repository**:
-    ```bash
-    git clone https://github.com/CMRNCHN/DOWNLOWd.git
-    cd DOWNLOWd
-    ```
+### Build installer
 
-2.  **Create a Virtual Environment**:
-    This creates an isolated environment for the project's dependencies.
-    ```bash
-    python3 -m venv .venv
-    ```
+```bash
+pip install '.[dev]'
+chmod +x build.sh
+./build.sh
+```
 
-3.  **Activate the Virtual Environment**:
-    You must activate the environment in your terminal session before installing packages or running the app.
-    ```bash
-    # On macOS or Linux
-    source .venv/bin/activate
+## Honest limitations
 
-    # On Windows
-    # .venv\Scripts\activate
-    ```
-
-4.  **Install Dependencies**:
-    This command reads the `pyproject.toml` file and installs `selenium`, `msal`, `requests`, and other required packages.
-    ```bash
-    pip install -e .
-    ```
-
----
-
-## How to Run
-
-1.  **Unlock Bitwarden**: Before launching the app, ensure your Bitwarden vault is unlocked.
-    ```bash
-    bw unlock
-    ```
-
-2.  **Run the Application**: With your virtual environment activated, start the GUI.
-    ```bash
-    python3 run.py
-    ```
-
-3.  **Configure and Use**:
-    - Use the **M365 Settings** button to enter your Microsoft Graph API credentials.
-    - Enter a common **Initial Password** for the new accounts that will be created.
-    - The app will now monitor your Downloads folder. You can also trigger a run manually with the **Run Import Now** button.
-
----
-
-## Creating a Distributable Application
-
-To create a single, standalone executable file that can be run on other machines without needing to install Python or any dependencies, you can use PyInstaller.
-
-1.  **Install PyInstaller**:
-    ```bash
-    pip install pyinstaller
-    ```
-
-2.  **Build the Application**:
-    Run the following command from the project root directory.
-    ```bash
-    pyinstaller --name="DOWNLOWD" --onefile --windowed run.py
-    ```
-    - `--name`: Sets the name of the final application.
-    - `--onefile`: Bundles everything into a single executable file.
-    - `--windowed`: Prevents a terminal window from opening when the GUI is launched.
-
-3.  **Find the Executable**:
-    The final application will be located in the `dist` folder (e.g., `dist/DOWNLOWD`). You can copy this file to another machine and run it directly.
+- Transaction DB is **plaintext SQLite** with `chmod 600` — enable **FileVault** on macOS (the app warns at launch if FileVault is Off). Full SQLCipher encryption is future work.
+- Partner provisioning: Outlook uses clipboard + browser handoff; Hyatt/Marriott attempt Selenium form prefill (Chrome) then leave the window open for captcha/submit.
+- Day-20 log retention shreds **tracked** log paths and per-employee `logs/employees/<name>/` dirs; shared session logs are line-scrubbed (not whole-file deleted).
+- Partner provisioning is **browser handoff**, not fully automated signup
+- No Microsoft Graph email provisioning in this build

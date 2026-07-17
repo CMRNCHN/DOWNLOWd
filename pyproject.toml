@@ -12,9 +12,11 @@ authors = [
 license = "MIT"
 requires-python = ">=3.8"
 dependencies = [
-    "requests",
-    "msal",
-    "selenium",
+    "keyring>=24.0.0",
+    "requests>=2.31.0",
+    "selenium>=4.15.0",
+    "msal>=1.20.0",
+    "tkinterdnd2-universal>=0.5.1",
 ]
 
 [project.urls]
@@ -34,4 +36,9 @@ py-modules = [
     "onboarding",
     "integrations",
     "bw_import_converter",
+    "transaction_db",
+    "data_retention",
+    "audit_logger",
+    "account_automation",
+    "secure_delete",
 ]
