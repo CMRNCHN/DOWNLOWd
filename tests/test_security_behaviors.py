@@ -513,7 +513,7 @@ class OnboardingTests(unittest.TestCase):
                 self.assertEqual(fields[EMPLOYEE_ID_FIELD], employee_id)
                 roles.add(fields[RECORD_ROLE_FIELD])
             self.assertEqual(roles, {"email_login", "identity", "work_card"})
-            identity = next(item for item in items if item["type"] == 2)
+            identity = next(item for item in items if item["type"] == 4)
             self.assertEqual(identity["identity"]["firstName"], "Ada")
             self.assertEqual(identity["identity"]["lastName"], "Lovelace")
             self.assertIn(
@@ -663,7 +663,7 @@ class EmployeeProfileTests(unittest.TestCase):
     def _tagged_item(item_id, employee_id, role, name, revision="r1"):
         return {
             "id": item_id,
-            "type": 2 if role == "identity" else 1,
+            "type": 4 if role == "identity" else 1,
             "name": name,
             "revisionDate": revision,
             "fields": [
@@ -732,7 +732,7 @@ class EmployeeProfileTests(unittest.TestCase):
                     raise RuntimeError("not found")
                 return {
                     "id": item_id,
-                    "type": 2,
+                    "type": 4,
                     "identity": {"firstName": "Ada"},
                 }
 
@@ -749,7 +749,7 @@ class EmployeeProfileTests(unittest.TestCase):
                 {
                     "id": item_id,
                     "name": "Ada Lovelace — Work Identity",
-                    "type": 2,
+                    "type": 4,
                     "fields": [],
                 }
                 for item_id in ("one", "two")
@@ -814,11 +814,14 @@ class EmployeeProfileTests(unittest.TestCase):
             profile = store.upsert(display_name="Ada Lovelace")
             vault = FakeProfileVault()
             service = ProfileSyncService(vault, store)
-            for role, item_id in (("identity", "one"), ("work_card", "two")):
+            for role, item_id, item_type in (
+                ("identity", "one", 4),
+                ("work_card", "two", 3),
+            ):
                 store.bind_vault_ref(
                     profile["employee_id"],
                     role,
-                    {"id": item_id, "type": 2, "revisionDate": "r1"},
+                    {"id": item_id, "type": item_type, "revisionDate": "r1"},
                 )
             vault.fail_trash.add("two")
             result = service.trash_bundle(profile["employee_id"])
@@ -838,7 +841,7 @@ class EmployeeProfileTests(unittest.TestCase):
             store.bind_vault_ref(
                 profile["employee_id"],
                 "identity",
-                {"id": "one", "type": 2, "revisionDate": "r1"},
+                {"id": "one", "type": 4, "revisionDate": "r1"},
             )
             vault = FakeProfileVault()
             service = ProfileSyncService(vault, store)

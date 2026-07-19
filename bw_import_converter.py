@@ -427,7 +427,8 @@ class BitwardenConverter:
         employee_id: str,
     ) -> Dict[str, Any]:
         """Generates the Bitwarden 'Identity' item dictionary."""
-        item = self._create_base_item(2, f"{full_name} — Work Identity")
+        # Bitwarden CipherType: 1 Login, 2 Secure Note, 3 Card, 4 Identity
+        item = self._create_base_item(4, f"{full_name} — Work Identity")
         identity_details: Dict[str, Any] = {}
         custom_fields: List[Dict[str, Any]] = []
         
