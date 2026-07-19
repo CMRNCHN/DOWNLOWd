@@ -2,7 +2,7 @@
 
 ## Overview
 
-Security controls for local credential storage, application unlock, Bitwarden CLI session handling, transaction data, retention, and audit logging.
+Security controls for application and Bitwarden authentication, local settings, transaction data, retention, and audit logging.
 
 ## Features
 
@@ -13,21 +13,23 @@ Security controls for local credential storage, application unlock, Bitwarden CL
 - After a successful migration the source file is **securely overwritten and deleted** (no `.json.backup` left behind)
 - If migration fails mid-way, the original file is left intact and an error is logged
 
-### 2. Application Authentication (PBKDF2)
+### 2. Application Authentication (PBKDF2 + Bitwarden)
 
-- First launch: set password (confirm required; minimum 8 characters)
-- Password stored as **PBKDF2-HMAC-SHA256** (200,000 iterations) with a random salt in Keychain
-- Later launches: verify password against the stored hash; mismatches are rejected
-- On success, a random `secrets.token_urlsafe(32)` session token is stored with a created-at timestamp
-- Session timeout: **1 hour**
-- Auth success/failure events are written to the audit log
+- First launch requires creating a separate app password (minimum 8 characters)
+- The app password is stored as a PBKDF2-HMAC-SHA256 hash (200,000 iterations) with a random salt in Keychain
+- Correct password verification creates a random Keychain session token with a one-hour timeout
+- The main window opens only after app-password verification and a successful `bw login` or `bw unlock`
+- The Bitwarden master password is passed to the CLI through a process environment variable and is not persisted by DOWNLOWd
+- The returned `BW_SESSION` value is held in process memory and passed only to child `bw` commands
+- Failed login/unlock and cancelled 2FA clear the in-memory session
+- Authentication success/failure/cancellation events are written to the audit log
 
-Keychain keys: `app_password_hash`, `app_password_salt`, `app_session_token`, `app_session_created_at`
+Keychain keys: `app_password_hash`, `app_password_salt`, `app_session_token`, `app_session_created_at`.
 
 ### 3. Transaction Logging
 
 - Local SQLite at `~/.downlowd_transactions.db`
-- File mode set to **`0o600`** after create/open
+- File mode is enforced as **`0o600`** before every SQLite connection
 - **Not encrypted at rest** (SQLCipher is out of scope for this release; tracked as future work)
 - Add / list / export CSV / delete by database id (Treeview `iid`)
 
@@ -42,7 +44,7 @@ Independent milestone checks (overdue day-15/20 are not blocked by unfinished da
 | 15 | Auto-shred employee transactions |
 | 20 | Secure-delete matching log files; scrub employee lines from audit log (fail closed on errors) |
 
-- Scheduler starts after successful app auth
+- Scheduler starts after successful app and Bitwarden authentication
 - Employees are registered from the onboarding pipeline after a successful convert
 
 ### 5. Security Audit Logging
@@ -56,21 +58,34 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 - Session key from `bw unlock --raw` / `bw login --raw` is kept on `BitwardenService`
 - Subsequent CLI calls set `BW_SESSION` in the subprocess environment
 - Session is cleared on failed unlock/login
+- Named organization collections must resolve exactly; lookup failures do not fall back to Personal Vault
 
 ### 7. Secure Temporary Files
 
 - Import temp files under `~/.downlowd_temp/` (`0o700` dir, `0o600` files)
 - Multi-pass overwrite before unlink
 
+### 8. Bitwarden-Synced Employee Profiles
+
+- Versioned, owner-only metadata at `~/.downlowd_profiles.json`, keyed by immutable employee UUID
+- Local records contain display metadata and vault item references only—never passwords, card numbers, CVVs, SSNs, or DOB
+- New imports include hidden employee-ID and record-role fields, then reconcile actual Bitwarden item IDs after `bw sync`
+- Legacy records require one unique exact employee/role match; ambiguous matches remain unresolved
+- Identity edits reload and compare `revisionDate` before saving and preserve unknown item fields
+- Identity, Email Login, Hyatt, Marriott, and Work Card values load only when selected and are cleared from the viewer on close, sync, or session expiry
+- Profile deletion trashes only bound item IDs. Restore remains available for two days; permanent purge occurs only after the deadline with an unlocked vault
+- Partial trash, restore, and purge failures remain visible and retryable. Audit entries contain employee UUIDs and redacted item IDs, not vault values
+
 ## File layout
 
 | Path | Role |
 |------|------|
-| `integrations.py` | Keychain, PBKDF2 auth, Bitwarden gateway |
+| `integrations.py` | Keychain settings, PBKDF2 app auth, and Bitwarden gateway |
 | `onboarding.py` | Pipeline orchestrator |
 | `bw_import_converter.py` | HQ → Bitwarden JSON (single converter source) |
 | `transaction_db.py` | SQLite transactions |
 | `data_retention.py` | Retention schedule + shred |
+| `employee_profiles.py` | UUID profile metadata, reconciliation, edit, trash/restore/purge |
 | `audit_logger.py` | Audit trail |
 | `account_automation.py` | Partner Selenium prefill + clipboard/browser fallback |
 
@@ -82,7 +97,7 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 
 ## Best practices
 
-1. Use a strong unique application password
+1. Use separate strong app and Bitwarden passwords; enable Bitwarden 2FA
 2. Review `~/.downlowd_audit.log` periodically
 3. Treat `~/.downlowd_transactions.db` as sensitive — **FileVault required for production**; the app warns at launch if FileVault is Off
 4. Respond to retention prompts promptly

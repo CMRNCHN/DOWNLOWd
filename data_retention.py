@@ -6,13 +6,14 @@ Handles automated data lifecycle management with 5/10/15/20 day schedule.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from audit_logger import AUDIT_LOG_FILE, get_audit_logger
 
@@ -23,13 +24,19 @@ LOGS_DIR = Path.cwd() / "logs"
 class DataRetentionManager:
     """Manages automated data lifecycle for employee and transaction data."""
 
-    def __init__(self, transaction_db, prompt_callback: Optional[Callable[[Dict], None]] = None):
+    def __init__(
+        self,
+        transaction_db,
+        prompt_callback: Optional[Callable[[Dict], None]] = None,
+        profile_sync: Optional[Any] = None,
+    ):
         self.transaction_db = transaction_db
         self.retention_data = self._load_retention_data()
         self._scheduler_thread = None
         self._running = False
-        # Called from scheduler thread for day 5/10 actions that need UI prompts
+        # Called from the scheduler thread; callback must only enqueue work.
         self.prompt_callback = prompt_callback
+        self.profile_sync = profile_sync
         self.audit = get_audit_logger()
 
     def _load_retention_data(self) -> Dict:
@@ -43,6 +50,16 @@ class DataRetentionManager:
 
     def _save_retention_data(self):
         try:
+            if not RETENTION_DATA_FILE.exists():
+                try:
+                    fd = os.open(
+                        RETENTION_DATA_FILE,
+                        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                        0o600,
+                    )
+                    os.close(fd)
+                except FileExistsError:
+                    pass
             RETENTION_DATA_FILE.write_text(
                 json.dumps(self.retention_data, indent=2),
                 encoding="utf-8",
@@ -57,6 +74,8 @@ class DataRetentionManager:
         employee_name: str,
         file_date: str,
         associated_logs: Optional[List[str]] = None,
+        aliases: Optional[List[str]] = None,
+        profile: Optional[Dict[str, str]] = None,
     ):
         """Register employee and optionally bind exact log file paths for day-20 shredding."""
         existing = self.retention_data["employees"].get(employee_name, {})
@@ -65,10 +84,30 @@ class DataRetentionManager:
             p = str(Path(path).resolve())
             if p not in merged_logs:
                 merged_logs.append(p)
+        merged_aliases: List[str] = list(existing.get("aliases") or [])
+        for alias in aliases or []:
+            normalized = str(alias).strip()
+            if normalized and normalized != employee_name and normalized not in merged_aliases:
+                merged_aliases.append(normalized)
+        merged_profile = dict(existing.get("profile") or {})
+        merged_profile.update(
+            {
+                key: str(value).strip()
+                for key, value in (profile or {}).items()
+                if value is not None and str(value).strip()
+            }
+        )
+        accounts = {
+            "email": "pending",
+            "hyatt": "pending",
+            "marriott": "pending",
+            **(existing.get("accounts") or {}),
+        }
 
         # Dedicated per-employee log dir (created eagerly so day-20 has a deterministic target)
         emp_dir = LOGS_DIR / "employees" / self._employee_slug(employee_name)
-        emp_dir.mkdir(parents=True, exist_ok=True)
+        emp_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(emp_dir, 0o700)
 
         self.retention_data["employees"][employee_name] = {
             "file_date": file_date,
@@ -79,11 +118,59 @@ class DataRetentionManager:
             "day15_shredded": existing.get("day15_shredded", False),
             "day20_logs_shredded": existing.get("day20_logs_shredded", False),
             "associated_logs": merged_logs,
+            "aliases": merged_aliases,
+            "profile": merged_profile,
+            "accounts": accounts,
             "employee_log_dir": str(emp_dir.resolve()),
         }
         self._save_retention_data()
         logging.info("Registered employee for retention: %s", employee_name)
         self.audit.log_retention_action(employee_name, 0, "registered")
+
+    def update_account_status(self, employee_name: str, service: str, status: str) -> bool:
+        """Persist partner-account progress so onboarding can resume later."""
+        employee = self.retention_data["employees"].get(employee_name)
+        service_key = service.strip().lower()
+        if employee is None or service_key not in {"email", "hyatt", "marriott"}:
+            return False
+        employee.setdefault("accounts", {})[service_key] = status
+        self._save_retention_data()
+        self.audit.log_retention_action(
+            employee_name,
+            0,
+            f"{service_key}_account_{status}",
+        )
+        return True
+
+    def get_employee_profile(self, employee_name: str) -> Optional[Dict]:
+        employee = self.retention_data["employees"].get(employee_name)
+        if employee is None:
+            return None
+        profile = dict(employee.get("profile") or {})
+        aliases = list(employee.get("aliases") or [])
+        if not profile.get("email"):
+            profile["email"] = next(
+                (alias for alias in aliases if "@" in alias),
+                "",
+            )
+        if not profile.get("username"):
+            profile["username"] = next(
+                (alias for alias in aliases if "@" not in alias),
+                "",
+            )
+        name_parts = employee_name.split()
+        profile.setdefault("first_name", name_parts[0] if name_parts else "")
+        profile.setdefault("last_name", name_parts[-1] if len(name_parts) > 1 else "")
+        return {
+            "full_name": employee_name,
+            **profile,
+            "accounts": {
+                "email": "pending",
+                "hyatt": "pending",
+                "marriott": "pending",
+                **(employee.get("accounts") or {}),
+            },
+        }
 
     @staticmethod
     def _employee_slug(employee_name: str) -> str:
@@ -182,8 +269,11 @@ class DataRetentionManager:
             return False
 
         try:
-            if self.transaction_db.delete_employee_transactions(employee_name):
-                logging.info("Shredded transactions for %s", employee_name)
+            if not self.transaction_db.delete_employee_transactions(employee_name):
+                logging.error("Could not delete transactions for %s", employee_name)
+                self.audit.log_retention_action(employee_name, 15, "auto_shred_failed")
+                return False
+            logging.info("Shredded transactions for %s", employee_name)
 
             self.retention_data["employees"][employee_name]["day15_shredded"] = True
             self.retention_data["employees"][employee_name]["status"] = "shredded"
@@ -198,15 +288,26 @@ class DataRetentionManager:
             logging.error("Failed to auto-shred data for %s: %s", employee_name, e)
             return False
 
+    @staticmethod
+    def _employee_reference(employee_name: str) -> str:
+        return hashlib.sha256(employee_name.encode("utf-8")).hexdigest()[:12]
+
+    def _overwrite_file(self, file_path: Path) -> int:
+        """Best-effort overwrite of the file's current logical contents."""
+        file_size = file_path.stat().st_size or 1
+        with open(file_path, "r+b") as f:
+            for _ in range(3):
+                f.seek(0)
+                f.write(os.urandom(file_size))
+                f.truncate(file_size)
+                f.flush()
+                os.fsync(f.fileno())
+        return file_size
+
     def _secure_delete_file(self, file_path: Path) -> None:
         if not file_path.exists():
             return
-        file_size = file_path.stat().st_size or 1
-        with open(file_path, "wb") as f:
-            for _ in range(3):
-                f.write(os.urandom(file_size))
-                f.flush()
-                os.fsync(f.fileno())
+        self._overwrite_file(file_path)
         file_path.unlink()
 
     def execute_log_shredding(self, employee_name: str) -> bool:
@@ -215,6 +316,8 @@ class DataRetentionManager:
             return False
 
         data = self.retention_data["employees"][employee_name]
+        employee_ref = self._employee_reference(employee_name)
+        scrub_subjects = [employee_name, *(data.get("aliases") or [])]
         deleted_any = False
         errors: List[str] = []
 
@@ -226,12 +329,13 @@ class DataRetentionManager:
                     if path.exists() and path.is_file():
                         # Shared session logs: scrub lines instead of deleting the whole file
                         if path.parent.resolve() == LOGS_DIR.resolve() and path.name.startswith("onboarding_"):
-                            if self._scrub_employee_lines(path, employee_name):
-                                deleted_any = True
+                            for subject in scrub_subjects:
+                                if self._scrub_employee_lines(path, subject):
+                                    deleted_any = True
                         else:
                             self._secure_delete_file(path)
                             deleted_any = True
-                            logging.info("Shredded tracked log %s for %s", path.name, employee_name)
+                            logging.info("Shredded tracked log %s for employee %s", path.name, employee_ref)
                 except Exception as e:
                     errors.append(f"{path}: {e}")
                     logging.error("Failed to shred tracked log %s: %s", path, e)
@@ -258,33 +362,40 @@ class DataRetentionManager:
             # 3) Scrub audit log lines mentioning this employee (never delete whole audit file)
             if AUDIT_LOG_FILE.exists():
                 try:
-                    if self._scrub_employee_lines(AUDIT_LOG_FILE, employee_name):
-                        deleted_any = True
+                    for subject in scrub_subjects:
+                        if self.audit.scrub_entries_containing(subject):
+                            deleted_any = True
                 except Exception as e:
                     errors.append(f"audit_log: {e}")
                     logging.error("Failed to scrub audit log for %s: %s", employee_name, e)
 
             if errors:
                 logging.error(
-                    "Log shredding for %s incomplete (%d errors); not marking complete",
-                    employee_name,
+                    "Log shredding for employee %s incomplete (%d errors); not marking complete",
+                    employee_ref,
                     len(errors),
                 )
-                self.audit.log_retention_action(employee_name, 20, "shred_logs_failed")
+                self.audit.log_security_event(
+                    "shred_logs_failed",
+                    f"Employee reference: {employee_ref}",
+                )
                 return False
 
             self.retention_data["employees"][employee_name]["day20_logs_shredded"] = True
             self._save_retention_data()
             logging.info(
-                "Day 20: Log shredding completed for %s (touched=%s)",
-                employee_name,
+                "Day 20: Log shredding completed for employee %s (touched=%s)",
+                employee_ref,
                 deleted_any,
             )
-            self.audit.log_retention_action(employee_name, 20, "shred_logs")
+            self.audit.log_security_event(
+                "shred_logs_complete",
+                f"Employee reference: {employee_ref}",
+            )
             return True
 
         except Exception as e:
-            logging.error("Failed to shred logs for %s: %s", employee_name, e)
+            logging.error("Failed to shred logs for employee %s: %s", employee_ref, e)
             return False
 
     def _scrub_employee_lines(self, file_path: Path, employee_name: str) -> bool:
@@ -295,15 +406,23 @@ class DataRetentionManager:
         kept = [ln for ln in lines if needle not in ln.lower()]
         if len(kept) == len(lines):
             return False
-        # Secure-ish rewrite: overwrite with remaining content then truncate
+        # Overwrite the complete original logical file before recreating retained lines.
         new_text = "".join(kept)
+        self._overwrite_file(file_path)
         with open(file_path, "r+b") as f:
             data = new_text.encode("utf-8")
+            f.seek(0)
             f.write(data)
             f.truncate(len(data))
             f.flush()
             os.fsync(f.fileno())
-        logging.info("Scrubbed %d lines for %s from %s", len(lines) - len(kept), employee_name, file_path.name)
+        os.chmod(file_path, 0o600)
+        logging.info(
+            "Scrubbed %d lines for employee %s from %s",
+            len(lines) - len(kept),
+            self._employee_reference(employee_name),
+            file_path.name,
+        )
         return True
 
     def process_actions(self, actions: Optional[List[Dict]] = None) -> None:
@@ -338,15 +457,6 @@ class DataRetentionManager:
         )
         self._scheduler_thread.start()
         logging.info("Retention scheduler started (checks every %s hours)", check_interval_hours)
-        # Run an immediate check shortly after start
-        threading.Thread(target=self._initial_check, daemon=True).start()
-
-    def _initial_check(self):
-        time.sleep(2)
-        try:
-            self.process_actions()
-        except Exception as e:
-            logging.error("Error in initial retention check: %s", e)
 
     def _scheduler_loop(self, interval_seconds: int):
         while self._running:
@@ -355,6 +465,13 @@ class DataRetentionManager:
                 if actions:
                     logging.info("Retention check found %d actions needed", len(actions))
                     self.process_actions(actions)
+                if getattr(self, "profile_sync", None) is not None:
+                    for result in self.profile_sync.purge_due():
+                        self.audit.log_security_event(
+                            "profile_purge",
+                            f"employee_id={result['employee_id']} "
+                            f"result={'partial' if result['failed'] else 'success'}",
+                        )
 
                 self.retention_data["last_check"] = datetime.now().isoformat()
                 self._save_retention_data()

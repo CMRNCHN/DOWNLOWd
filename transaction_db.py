@@ -24,6 +24,14 @@ class TransactionDatabase:
 
     def _get_connection(self) -> sqlite3.Connection:
         try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            if not self.db_path.exists():
+                try:
+                    fd = os.open(self.db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                    os.close(fd)
+                except FileExistsError:
+                    pass
+            self._ensure_permissions()
             return sqlite3.connect(self.db_path)
         except sqlite3.Error as e:
             logging.error("Database connection error: %s", e)
@@ -31,11 +39,13 @@ class TransactionDatabase:
 
     def _ensure_permissions(self) -> None:
         """Restrict DB file to owner read/write only (0o600)."""
-        try:
-            if self.db_path.exists():
+        if self.db_path.exists():
+            try:
                 os.chmod(self.db_path, 0o600)
-        except OSError as e:
-            logging.warning("Could not set DB permissions on %s: %s", self.db_path, e)
+            except OSError as e:
+                raise PermissionError(
+                    f"Could not restrict database permissions on {self.db_path}"
+                ) from e
 
     def _init_db(self):
         try:
@@ -51,9 +61,13 @@ class TransactionDatabase:
                     employee_name TEXT NOT NULL,
                     card_number TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    employee_file_date TEXT
+                    employee_file_date TEXT,
+                    employee_id TEXT
                 )
             """)
+            cursor.execute("PRAGMA table_info(transactions)")
+            if "employee_id" not in {row[1] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN employee_id TEXT")
 
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_employee
@@ -63,6 +77,10 @@ class TransactionDatabase:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_date
                 ON transactions(date)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_employee_id
+                ON transactions(employee_id)
             """)
 
             conn.commit()
@@ -81,6 +99,7 @@ class TransactionDatabase:
         employee_name: str,
         card_number: str,
         employee_file_date: Optional[str] = None,
+        employee_id: Optional[str] = None,
     ) -> bool:
         try:
             conn = self._get_connection()
@@ -90,10 +109,20 @@ class TransactionDatabase:
             cursor.execute(
                 """
                 INSERT INTO transactions
-                (date, amount, merchant, employee_name, card_number, created_at, employee_file_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (date, amount, merchant, employee_name, card_number, created_at,
+                 employee_file_date, employee_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (date, amount, merchant, employee_name, card_number, created_at, employee_file_date),
+                (
+                    date,
+                    amount,
+                    merchant,
+                    employee_name,
+                    card_number,
+                    created_at,
+                    employee_file_date,
+                    employee_id,
+                ),
             )
 
             conn.commit()
@@ -111,7 +140,8 @@ class TransactionDatabase:
             cursor = conn.cursor()
 
             cursor.execute("""
-                SELECT id, date, amount, merchant, employee_name, card_number, created_at, employee_file_date
+                SELECT id, date, amount, merchant, employee_name, card_number,
+                       created_at, employee_file_date, employee_id
                 FROM transactions
                 ORDER BY date DESC
             """)
@@ -127,6 +157,7 @@ class TransactionDatabase:
                     "card_number": row[5],
                     "created_at": row[6],
                     "employee_file_date": row[7],
+                    "employee_id": row[8],
                 })
 
             conn.close()
@@ -142,7 +173,8 @@ class TransactionDatabase:
 
             cursor.execute(
                 """
-                SELECT id, date, amount, merchant, employee_name, card_number, created_at, employee_file_date
+                SELECT id, date, amount, merchant, employee_name, card_number,
+                       created_at, employee_file_date, employee_id
                 FROM transactions
                 WHERE employee_name = ?
                 ORDER BY date DESC
@@ -161,6 +193,7 @@ class TransactionDatabase:
                     "card_number": row[5],
                     "created_at": row[6],
                     "employee_file_date": row[7],
+                    "employee_id": row[8],
                 })
 
             conn.close()
@@ -187,16 +220,48 @@ class TransactionDatabase:
             logging.error("Failed to retrieve employee names: %s", e)
             return []
 
+    def link_employee(self, employee_name: str, employee_id: str) -> int:
+        """Backfill immutable employee linkage while retaining the name snapshot."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE transactions
+                SET employee_id = ?
+                WHERE employee_name = ? AND employee_id IS NULL
+                """,
+                (employee_id, employee_name),
+            )
+            count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            return count
+        except sqlite3.Error as e:
+            logging.error("Failed to link employee transactions: %s", e)
+            return 0
+
+    def get_transactions_by_employee_id(self, employee_id: str) -> List[Dict[str, Any]]:
+        return [
+            transaction
+            for transaction in self.get_all_transactions()
+            if transaction.get("employee_id") == employee_id
+        ]
+
     def delete_transaction(self, transaction_id: int) -> bool:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
             cursor.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+            deleted = cursor.rowcount == 1
             conn.commit()
             conn.close()
-            logging.info("Deleted transaction ID: %s", transaction_id)
-            return True
+            if deleted:
+                logging.info("Deleted transaction ID: %s", transaction_id)
+            else:
+                logging.warning("Transaction ID not found: %s", transaction_id)
+            return deleted
         except sqlite3.Error as e:
             logging.error("Failed to delete transaction: %s", e)
             return False
@@ -238,8 +303,13 @@ class TransactionDatabase:
         try:
             if self.db_path.exists():
                 file_size = self.db_path.stat().st_size or 1
-                with open(self.db_path, "wb") as f:
-                    f.write(os.urandom(file_size))
+                with open(self.db_path, "r+b") as f:
+                    for _ in range(3):
+                        f.seek(0)
+                        f.write(os.urandom(file_size))
+                        f.truncate(file_size)
+                        f.flush()
+                        os.fsync(f.fileno())
                 self.db_path.unlink()
                 logging.info("Transaction database securely deleted")
                 return True

@@ -45,9 +45,11 @@ def secure_delete_file(file_path: Path, mode: str = DEFAULT_LOCAL_DELETE_MODE) -
     # overwrite + best_effort both overwrite; best_effort is explicit about fsync
     file_size = path.stat().st_size or 1
     passes = 3
-    with open(path, "wb") as f:
+    with open(path, "r+b") as f:
         for _ in range(passes):
+            f.seek(0)
             f.write(os.urandom(file_size))
+            f.truncate(file_size)
             f.flush()
             os.fsync(f.fileno())
     path.unlink()

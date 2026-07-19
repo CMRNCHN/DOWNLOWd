@@ -38,6 +38,7 @@ py-modules = [
     "bw_import_converter",
     "transaction_db",
     "data_retention",
+    "employee_profiles",
     "audit_logger",
     "account_automation",
     "secure_delete",

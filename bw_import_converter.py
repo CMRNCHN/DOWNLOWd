@@ -2,6 +2,7 @@
 
 import csv
 import json
+import os
 import sys
 import uuid
 from collections import defaultdict
@@ -13,7 +14,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
 
 # Per the spec, header matching is case-insensitive and ignores surrounding whitespace.
 # These are the normalized headers for required columns.
-REQUIRED_COLUMNS = {'firstname', 'lastname', 'cc', 'expmonth', 'expyear', 'cvv'}
+# Always required on every row (after normalization / fallbacks).
+REQUIRED_COLUMNS = {'cc', 'cvv'}
+# Identity: either split names or a combined `name` column.
+NAME_COLUMNS = {'firstname', 'lastname'}
+# Expiry: either split month/year or a combined `exp` column (e.g. 04/30).
+EXPIRY_COLUMNS = {'expmonth', 'expyear'}
 
 # Common variants for the Date of Birth column header.
 DOB_COLUMN_VARIANTS = {'dob', 'dateofbirth', 'birthdate'}
@@ -177,12 +183,19 @@ class BitwardenConverter:
                     continue
 
                 row_data: Dict[str, str] = dict(zip(header, row))
-                
+                self._enrich_row_fallbacks(row_data)
+
                 first_name = row_data.get('firstname', '').strip()
                 last_name = row_data.get('lastname', '').strip()
 
                 if not all(row_data.get(col, '').strip() for col in REQUIRED_COLUMNS):
                     self.stats["skipped_rows"]["Missing required values"].append(i)
+                    continue
+                if not first_name or not last_name:
+                    self.stats["skipped_rows"]["Missing name"].append(i)
+                    continue
+                if not all(row_data.get(col, '').strip() for col in EXPIRY_COLUMNS):
+                    self.stats["skipped_rows"]["Missing card expiry"].append(i)
                     continue
 
                 dob_str, dob_header_key = self._find_dob_value(row_data)
@@ -201,11 +214,30 @@ class BitwardenConverter:
                     continue
                 self.generated_usernames.add(username)
 
-                full_name = f"{first_name} {last_name}"
-                
-                login_item = self._generate_login_item(full_name, username)
-                identity_item = self._generate_identity_item(full_name, row_data, header_map, dob_str, dob_header_key)
-                card_item = self._generate_card_item(full_name, row_data, header_map)
+                full_name = " ".join(
+                    part for part in (
+                        first_name,
+                        row_data.get('middlename', '').strip(),
+                        last_name,
+                    ) if part
+                )
+
+                employee_id = str(uuid.uuid4())
+                login_item = self._generate_login_item(full_name, username, employee_id)
+                identity_item = self._generate_identity_item(
+                    full_name,
+                    row_data,
+                    header_map,
+                    dob_str,
+                    dob_header_key,
+                    employee_id,
+                )
+                card_item = self._generate_card_item(
+                    full_name,
+                    row_data,
+                    header_map,
+                    employee_id,
+                )
                 
                 items.extend([login_item, identity_item, card_item])
                 self.stats["items_generated"] += 3
@@ -215,6 +247,7 @@ class BitwardenConverter:
                     "first_name": first_name,
                     "last_name": last_name,
                     "email": f"{username}@outlook.com",
+                    "employee_id": employee_id,
                 })
 
         return items, employees
@@ -230,10 +263,88 @@ class BitwardenConverter:
             missing = REQUIRED_COLUMNS - header_set
             print(f"Error: Input file is missing required columns: {', '.join(missing)}", file=sys.stderr)
             return False
+        has_split_name = NAME_COLUMNS.issubset(header_set)
+        has_combined_name = 'name' in header_set
+        if not (has_split_name or has_combined_name):
+            print(
+                "Error: Input file must include firstname+lastname or a combined name column.",
+                file=sys.stderr,
+            )
+            return False
+        has_split_expiry = EXPIRY_COLUMNS.issubset(header_set)
+        has_combined_expiry = 'exp' in header_set
+        if not (has_split_expiry or has_combined_expiry):
+            print(
+                "Error: Input file must include expmonth+expyear or a combined exp column.",
+                file=sys.stderr,
+            )
+            return False
         if not DOB_COLUMN_VARIANTS.intersection(header_set):
             print(f"Error: Input file must contain a date of birth column. Accepted variants: {', '.join(DOB_COLUMN_VARIANTS)}", file=sys.stderr)
             return False
         return True
+
+    def _enrich_row_fallbacks(self, row_data: Dict[str, str]) -> None:
+        """Fill firstname/lastname from `name`, and expmonth/expyear from `exp` when empty."""
+        first = row_data.get('firstname', '').strip()
+        last = row_data.get('lastname', '').strip()
+        if not first or not last:
+            parsed = self._split_full_name(row_data.get('name', '').strip())
+            if parsed:
+                if not first:
+                    row_data['firstname'] = parsed[0]
+                if not row_data.get('middlename', '').strip() and parsed[1]:
+                    row_data['middlename'] = parsed[1]
+                if not last:
+                    row_data['lastname'] = parsed[2]
+
+        month = row_data.get('expmonth', '').strip()
+        year = row_data.get('expyear', '').strip()
+        if not month or not year:
+            parsed_exp = self._parse_card_expiry(row_data.get('exp', '').strip())
+            if parsed_exp:
+                if not month:
+                    row_data['expmonth'] = parsed_exp[0]
+                if not year:
+                    row_data['expyear'] = parsed_exp[1]
+
+    @staticmethod
+    def _split_full_name(full_name: str) -> Optional[Tuple[str, str, str]]:
+        """Split 'First Middle Last' into (first, middle, last). Middle may be empty."""
+        parts = [p for p in full_name.replace(',', ' ').split() if p]
+        if len(parts) < 2:
+            return None
+        if len(parts) == 2:
+            return parts[0], '', parts[1]
+        return parts[0], ' '.join(parts[1:-1]), parts[-1]
+
+    @staticmethod
+    def _parse_card_expiry(exp_string: str) -> Optional[Tuple[str, str]]:
+        """Parse MM/YY, MM/YYYY, MM-YY, or MMYY into (month, four-digit year)."""
+        raw = exp_string.strip()
+        if not raw:
+            return None
+        for sep in ('/', '-', ' '):
+            if sep in raw:
+                left, right = raw.split(sep, 1)
+                left, right = left.strip(), right.strip()
+                if left.isdigit() and right.isdigit():
+                    month = int(left)
+                    year = int(right)
+                    if 1 <= month <= 12:
+                        if year < 100:
+                            year += 2000
+                        return f"{month:02d}", str(year)
+                return None
+        digits = ''.join(ch for ch in raw if ch.isdigit())
+        if len(digits) in {4, 6}:
+            month = int(digits[:2])
+            year = int(digits[2:])
+            if 1 <= month <= 12:
+                if year < 100:
+                    year += 2000
+                return f"{month:02d}", str(year)
+        return None
 
     def _find_dob_value(self, row_data: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
         """Finds the DOB value and its corresponding key from the row data."""
@@ -275,7 +386,19 @@ class BitwardenConverter:
             "collectionIds": None,
         }
 
-    def _generate_login_item(self, full_name: str, username: str) -> Dict[str, Any]:
+    @staticmethod
+    def _correlation_fields(employee_id: str, role: str) -> List[Dict[str, Any]]:
+        return [
+            {"name": "DOWNLOWD Employee ID", "value": employee_id, "type": 1},
+            {"name": "DOWNLOWD Record Role", "value": role, "type": 1},
+        ]
+
+    def _generate_login_item(
+        self,
+        full_name: str,
+        username: str,
+        employee_id: str,
+    ) -> Dict[str, Any]:
         """Generates the Bitwarden 'Login' item dictionary."""
         item = self._create_base_item(1, f"{full_name} — Work Login")
         item["login"] = {
@@ -284,14 +407,25 @@ class BitwardenConverter:
             "password": self.password,
             "totp": None
         }
-        item["fields"] = [{
-            "name": "Email",
-            "value": f"{username}@outlook.com",
-            "type": 0
-        }]
+        item["fields"] = [
+            {
+                "name": "Email",
+                "value": f"{username}@outlook.com",
+                "type": 0,
+            },
+            *self._correlation_fields(employee_id, "email_login"),
+        ]
         return item
 
-    def _generate_identity_item(self, full_name: str, row_data: Dict[str, str], header_map: Dict[str, str], dob_str: str, dob_header_key: str) -> Dict[str, Any]:
+    def _generate_identity_item(
+        self,
+        full_name: str,
+        row_data: Dict[str, str],
+        header_map: Dict[str, str],
+        dob_str: str,
+        dob_header_key: str,
+        employee_id: str,
+    ) -> Dict[str, Any]:
         """Generates the Bitwarden 'Identity' item dictionary."""
         item = self._create_base_item(2, f"{full_name} — Work Identity")
         identity_details: Dict[str, Any] = {}
@@ -302,6 +436,7 @@ class BitwardenConverter:
             "value": dob_str,
             "type": 0
         })
+        custom_fields.extend(self._correlation_fields(employee_id, "identity"))
 
         processed_native_keys: Set[str] = set()
 
@@ -328,7 +463,13 @@ class BitwardenConverter:
         item["fields"] = custom_fields
         return item
 
-    def _generate_card_item(self, full_name: str, row_data: Dict[str, str], header_map: Dict[str, str]) -> Dict[str, Any]:
+    def _generate_card_item(
+        self,
+        full_name: str,
+        row_data: Dict[str, str],
+        header_map: Dict[str, str],
+        employee_id: str,
+    ) -> Dict[str, Any]:
         """Generates the Bitwarden 'Card' item dictionary."""
         item = self._create_base_item(3, f"{full_name} — Work Card")
         card_details: Dict[str, Any] = {}
@@ -353,7 +494,10 @@ class BitwardenConverter:
                 })
 
         item["card"] = card_details
-        item["fields"] = custom_fields
+        item["fields"] = [
+            *custom_fields,
+            *self._correlation_fields(employee_id, "work_card"),
+        ]
         return item
 
     def _write_output_file(self, items: List[Dict[str, Any]]) -> None:
@@ -363,7 +507,13 @@ class BitwardenConverter:
             "folders": [],
             "items": items
         }
-        with self.output_path.open(mode='w', encoding='utf-8') as outfile:
+        fd = os.open(
+            self.output_path,
+            os.O_CREAT | os.O_TRUNC | os.O_WRONLY,
+            0o600,
+        )
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, mode='w', encoding='utf-8') as outfile:
             json.dump(export_data, outfile, indent=2)
 
     def _print_summary(self) -> None:

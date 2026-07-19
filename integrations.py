@@ -1,6 +1,4 @@
-"""
-Credential storage (Keychain), app session auth (PBKDF2), and Bitwarden CLI gateway.
-"""
+"""Keychain-backed application auth and the Bitwarden CLI gateway."""
 
 from __future__ import annotations
 
@@ -21,13 +19,12 @@ from keyring.errors import KeyringError
 CREDENTIALS_FILE = Path.home() / ".onboarding_credentials.json"
 KEYRING_SERVICE = "DOWNLOWD"
 
-# App auth Keychain keys
 APP_PASSWORD_HASH_KEY = "app_password_hash"
 APP_PASSWORD_SALT_KEY = "app_password_salt"
 APP_SESSION_TOKEN_KEY = "app_session_token"
 APP_SESSION_CREATED_KEY = "app_session_created_at"
-
 PBKDF2_ITERATIONS = 200_000
+APP_SESSION_TIMEOUT_SECONDS = 3600
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -53,9 +50,11 @@ class CredentialStore:
             if not file_path.exists():
                 return
             file_size = file_path.stat().st_size or 1
-            with open(file_path, "wb") as f:
+            with open(file_path, "r+b") as f:
                 for _ in range(3):
+                    f.seek(0)
                     f.write(os.urandom(file_size))
+                    f.truncate(file_size)
                     f.flush()
                     os.fsync(f.fileno())
             file_path.unlink()
@@ -71,9 +70,16 @@ class CredentialStore:
         try:
             old_creds = json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
             for key, value in old_creds.items():
-                if value and not keyring.get_password(KEYRING_SERVICE, key):
-                    keyring.set_password(KEYRING_SERVICE, key, str(value))
-                    logging.info("Migrated credential '%s' to Keychain", key)
+                if not value:
+                    continue
+                expected = str(value)
+                existing = keyring.get_password(KEYRING_SERVICE, key)
+                if existing is None:
+                    keyring.set_password(KEYRING_SERVICE, key, expected)
+                    existing = keyring.get_password(KEYRING_SERVICE, key)
+                if existing != expected:
+                    raise KeyringError(f"Keychain verification failed for '{key}'")
+                logging.info("Migrated credential '%s' to Keychain", key)
             # Shred original; do not leave a plaintext .backup
             self._secure_delete_file(CREDENTIALS_FILE)
             logging.info("Credentials migrated to Keychain; source file securely deleted")
@@ -108,38 +114,52 @@ class CredentialStore:
 
 
 class SessionManager:
-    """PBKDF2 app-password auth with a random Keychain session token (1-hour timeout)."""
+    """PBKDF2 app-password authentication with a one-hour Keychain session."""
 
-    def __init__(self, credential_store: CredentialStore):
+    def __init__(
+        self,
+        credential_store: CredentialStore,
+        session_timeout: int = APP_SESSION_TIMEOUT_SECONDS,
+    ):
         self.credential_store = credential_store
-        self._session_timeout = 3600  # 1 hour
+        self.session_timeout = session_timeout
 
-    def has_password(self) -> bool:
-        return bool(self.credential_store.get(APP_PASSWORD_HASH_KEY))
-
-    def _hash_password(self, password: str, salt: bytes) -> str:
-        digest = hashlib.pbkdf2_hmac(
+    @staticmethod
+    def _hash_password(password: str, salt: bytes) -> str:
+        return hashlib.pbkdf2_hmac(
             "sha256",
             password.encode("utf-8"),
             salt,
             PBKDF2_ITERATIONS,
+        ).hex()
+
+    def has_password(self) -> bool:
+        return bool(
+            self.credential_store.get(APP_PASSWORD_HASH_KEY)
+            and self.credential_store.get(APP_PASSWORD_SALT_KEY)
         )
-        return digest.hex()
 
     def set_password(self, password: str) -> bool:
-        """First-run: store PBKDF2 hash + salt in Keychain."""
-        if not password:
+        if len(password) < 8:
             return False
-        try:
-            salt = secrets.token_bytes(16)
-            password_hash = self._hash_password(password, salt)
-            self.credential_store.update({
+        salt = secrets.token_bytes(16)
+        expected_hash = self._hash_password(password, salt)
+        self.credential_store.update(
+            {
                 APP_PASSWORD_SALT_KEY: salt.hex(),
-                APP_PASSWORD_HASH_KEY: password_hash,
-            })
-            return True
-        except KeyringError:
-            return False
+                APP_PASSWORD_HASH_KEY: expected_hash,
+            }
+        )
+        return bool(
+            secrets.compare_digest(
+                str(self.credential_store.get(APP_PASSWORD_HASH_KEY, "")),
+                expected_hash,
+            )
+            and secrets.compare_digest(
+                str(self.credential_store.get(APP_PASSWORD_SALT_KEY, "")),
+                salt.hex(),
+            )
+        )
 
     def verify_password(self, password: str) -> bool:
         stored_hash = self.credential_store.get(APP_PASSWORD_HASH_KEY)
@@ -147,45 +167,57 @@ class SessionManager:
         if not stored_hash or not salt_hex:
             return False
         try:
-            salt = bytes.fromhex(salt_hex)
-            candidate = self._hash_password(password, salt)
-            return secrets.compare_digest(candidate, stored_hash)
-        except (ValueError, TypeError):
+            salt = bytes.fromhex(str(salt_hex))
+        except ValueError:
             return False
-
-    def is_authenticated(self) -> bool:
-        try:
-            token = self.credential_store.get(APP_SESSION_TOKEN_KEY)
-            created_raw = self.credential_store.get(APP_SESSION_CREATED_KEY)
-            if not token or not created_raw:
-                return False
-            created = float(created_raw)
-            return (time.time() - created) < self._session_timeout
-        except (KeyringError, ValueError, TypeError):
-            return False
+        candidate = self._hash_password(password, salt)
+        return secrets.compare_digest(candidate, str(stored_hash))
 
     def create_session(self, password: str) -> bool:
-        """Verify password, then mint a random session token."""
         if not self.verify_password(password):
             return False
-        try:
-            token = secrets.token_urlsafe(32)
-            self.credential_store.update({
+        token = secrets.token_urlsafe(32)
+        created_at = str(time.time())
+        self.credential_store.update(
+            {
                 APP_SESSION_TOKEN_KEY: token,
-                APP_SESSION_CREATED_KEY: str(time.time()),
-            })
-            return True
-        except KeyringError:
+                APP_SESSION_CREATED_KEY: created_at,
+            }
+        )
+        return bool(
+            secrets.compare_digest(
+                str(self.credential_store.get(APP_SESSION_TOKEN_KEY, "")),
+                token,
+            )
+            and secrets.compare_digest(
+                str(self.credential_store.get(APP_SESSION_CREATED_KEY, "")),
+                created_at,
+            )
+        )
+
+    def is_authenticated(self) -> bool:
+        if not self.has_password():
+            self.invalidate_session()
             return False
+        token = self.credential_store.get(APP_SESSION_TOKEN_KEY)
+        created_at = self.credential_store.get(APP_SESSION_CREATED_KEY)
+        if not token or not created_at:
+            return False
+        try:
+            active = 0 <= time.time() - float(created_at) < self.session_timeout
+        except (TypeError, ValueError):
+            active = False
+        if not active:
+            self.invalidate_session()
+        return active
 
     def invalidate_session(self) -> None:
-        try:
-            self.credential_store.update({
+        self.credential_store.update(
+            {
                 APP_SESSION_TOKEN_KEY: "",
                 APP_SESSION_CREATED_KEY: "",
-            })
-        except KeyringError:
-            pass
+            }
+        )
 
 
 class BitwardenService:
@@ -198,6 +230,8 @@ class BitwardenService:
         env = os.environ.copy()
         if self.session_key:
             env["BW_SESSION"] = self.session_key
+        else:
+            env.pop("BW_SESSION", None)
         return env
 
     def _run_bw(self, args: List[str], **kwargs) -> subprocess.CompletedProcess:
@@ -254,6 +288,10 @@ class BitwardenService:
                 (e.stderr or e.stdout or "").strip(),
             )
             return False
+        except OSError as e:
+            self.clear_session()
+            logging.error("Could not run Bitwarden CLI: %s", e)
+            return False
 
     def login(self, email: str, password: str, two_factor_code: Optional[str] = None) -> Dict[str, Any]:
         """Log into Bitwarden CLI and store session key (non-interactive)."""
@@ -291,39 +329,117 @@ class BitwardenService:
                 "two_factor_required": False,
                 "error": _clean_cli_text(stderr) or "Login failed.",
             }
+        except OSError as e:
+            self.clear_session()
+            logging.error("Could not run Bitwarden CLI: %s", e)
+            return {
+                "success": False,
+                "two_factor_required": False,
+                "error": "Bitwarden CLI is unavailable.",
+            }
 
-    def get_collection_id(self, collection_name: str) -> str:
-        logging.info("Fetching Collection ID for '%s'...", collection_name)
+    def resolve_collection(self, collection_name: str) -> Optional[Dict[str, Any]]:
+        """Resolve an exact organization collection; return None for personal vault.
+
+        Bitwarden collections only exist inside organizations. Personal accounts
+        import directly into the personal vault and do not have a collection ID.
+        """
+        name = (collection_name or "").strip()
+        if not name or name.lower() in {"personal", "personal vault", "my vault"}:
+            logging.info("Using personal Bitwarden vault (no organization collection).")
+            return None
+
+        logging.info("Looking for Bitwarden organization collection '%s'...", name)
         try:
             proc = self._run_bw(
-                ["get", "collection", collection_name],
+                ["list", "collections", "--search", name, "--raw"],
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            cid = json.loads(proc.stdout).get("id")
-            if not cid or cid == "null":
-                raise RuntimeError(f"Could not find Bitwarden Collection named '{collection_name}'.")
-            logging.info("Found Collection ID: %s", cid)
-            return cid
-        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
-            logging.error("Could not find Bitwarden Collection named '%s'. Details: %s", collection_name, e)
-            raise
+            collections = json.loads(proc.stdout or "[]")
+            exact_matches = [
+                collection
+                for collection in collections
+                if str(collection.get("name", "")).casefold() == name.casefold()
+            ]
+            if len(exact_matches) > 1:
+                organization_ids = sorted(
+                    {
+                        str(collection.get("organizationId") or "unknown")
+                        for collection in exact_matches
+                    }
+                )
+                raise RuntimeError(
+                    f"Bitwarden collection '{name}' is ambiguous across organizations "
+                    f"({', '.join(organization_ids)}). Use a unique collection name."
+                )
+            if exact_matches:
+                exact = exact_matches[0]
+                logging.info(
+                    "Using organization collection '%s' (%s).",
+                    exact.get("name"),
+                    exact.get("id"),
+                )
+                return exact
 
-    def import_json(self, bw_json: str, collection_id: str) -> None:
-        """Import Bitwarden JSON via a restricted temp file."""
+            raise RuntimeError(
+                f"Bitwarden collection '{name}' does not exist. "
+                "Select 'Personal Vault' explicitly to import outside an organization."
+            )
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            raise RuntimeError(
+                f"Could not resolve Bitwarden collection '{name}'."
+            ) from e
+
+    def import_json(
+        self,
+        bw_json: str,
+        collection: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Import Bitwarden JSON into personal vault or an organization collection."""
         secure_temp_dir = Path.home() / ".downlowd_temp"
         secure_temp_dir.mkdir(exist_ok=True, mode=0o700)
+        collection_id = str(collection.get("id")) if collection else "personal"
+        organization_id = (
+            str(collection.get("organizationId"))
+            if collection and collection.get("organizationId")
+            else None
+        )
         temp_file = secure_temp_dir / f"temp_import_{collection_id}.json"
 
         try:
-            temp_file.write_text(bw_json, encoding="utf-8")
+            import_payload = bw_json
+            if collection:
+                # Bitwarden JSON supports organizationId + collectionIds on items.
+                # Populate them so organization imports land in the chosen collection.
+                parsed = json.loads(bw_json)
+                for item in parsed.get("items", []):
+                    item["organizationId"] = organization_id
+                    item["collectionIds"] = [collection_id]
+                import_payload = json.dumps(parsed, indent=2)
+
+            temp_file.write_text(import_payload, encoding="utf-8")
             temp_file.chmod(0o600)
-            logging.info("Importing data into Bitwarden collection %s...", collection_id)
-            self._run_bw(
-                ["import", "bitwardenjson", str(temp_file), "--collectionid", collection_id],
-                check=True,
-            )
+            target_name = collection.get("name") if collection else "Personal Vault"
+            logging.info("Importing data into Bitwarden target %s...", target_name)
+            args = ["import"]
+            if organization_id:
+                args.extend(["--organizationid", organization_id])
+            args.extend(["bitwardenjson", str(temp_file)])
+            try:
+                self._run_bw(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as e:
+                detail = _clean_cli_text(e.stderr or e.stdout or "")
+                raise RuntimeError(
+                    f"Bitwarden import failed for {target_name}: "
+                    f"{detail or 'unknown CLI error'}"
+                ) from e
         finally:
             if temp_file.exists():
                 self._secure_delete_file(temp_file)
@@ -331,9 +447,11 @@ class BitwardenService:
     def _secure_delete_file(self, file_path: Path) -> None:
         try:
             file_size = file_path.stat().st_size or 1
-            with open(file_path, "wb") as f:
+            with open(file_path, "r+b") as f:
                 for _ in range(3):
+                    f.seek(0)
                     f.write(os.urandom(file_size))
+                    f.truncate(file_size)
                     f.flush()
                     os.fsync(f.fileno())
             file_path.unlink()
@@ -345,14 +463,94 @@ class BitwardenService:
             except Exception:
                 pass
 
-    def list_items(self, collection_id: str) -> List[Dict[str, Any]]:
+    def list_items(self, collection_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        args = ["list", "items"]
+        if collection_id:
+            args.extend(["--collectionid", collection_id])
+        args.append("--raw")
         proc = self._run_bw(
-            ["list", "items", "--collectionid", collection_id, "--raw"],
+            args,
             capture_output=True,
             text=True,
             check=True,
         )
         return json.loads(proc.stdout)
 
+    def sync(self) -> None:
+        self._run_bw(
+            ["sync"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    def get_item(self, item_id: str) -> Dict[str, Any]:
+        proc = self._run_bw(
+            ["get", "item", item_id, "--raw"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(proc.stdout)
+
+    def _encode_payload(self, payload: Dict[str, Any]) -> str:
+        proc = self._run_bw(
+            ["encode"],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        encoded = proc.stdout.strip()
+        if not encoded:
+            raise RuntimeError("Bitwarden returned an empty encoded payload.")
+        return encoded
+
+    def create_item(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        encoded = self._encode_payload(payload)
+        proc = self._run_bw(
+            ["create", "item", encoded],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(proc.stdout)
+
+    def edit_item(self, item_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        encoded = self._encode_payload(payload)
+        proc = self._run_bw(
+            ["edit", "item", item_id, encoded],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(proc.stdout)
+
+    def trash_item(self, item_id: str) -> None:
+        self._run_bw(
+            ["delete", "item", item_id],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    def restore_item(self, item_id: str) -> Dict[str, Any]:
+        proc = self._run_bw(
+            ["restore", "item", item_id],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(proc.stdout) if proc.stdout.strip() else {}
+
+    def delete_item_permanently(self, item_id: str) -> None:
+        self._run_bw(
+            ["delete", "item", item_id, "--permanent"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
     def delete_item(self, item_id: str) -> None:
-        self._run_bw(["delete", "item", item_id], check=True)
+        """Backward-compatible trash operation."""
+        self.trash_item(item_id)

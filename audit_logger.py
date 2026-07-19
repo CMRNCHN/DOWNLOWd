@@ -4,7 +4,7 @@ Handles security audit logging for critical operations.
 """
 
 import logging
-import json
+import os
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -22,6 +22,7 @@ class AuditLogger:
         """Setup dedicated audit logger."""
         self.audit_logger = logging.getLogger("audit")
         self.audit_logger.setLevel(logging.INFO)
+        self.audit_logger.propagate = False
         
         # File handler for audit log
         try:
@@ -31,8 +32,44 @@ class AuditLogger:
                 "%Y-%m-%d %H:%M:%S"
             ))
             self.audit_logger.addHandler(handler)
+            os.chmod(AUDIT_LOG_FILE, 0o600)
         except IOError as e:
             logging.error(f"Failed to setup audit log: {e}")
+
+    def scrub_entries_containing(self, subject: str) -> bool:
+        """Remove subject-bearing lines and safely reopen the audit file handler."""
+        if not AUDIT_LOG_FILE.exists():
+            return False
+        original = AUDIT_LOG_FILE.read_text(encoding="utf-8", errors="ignore")
+        lines = original.splitlines(keepends=True)
+        kept = [line for line in lines if subject.casefold() not in line.casefold()]
+        if len(kept) == len(lines):
+            return False
+
+        for handler in list(self.audit_logger.handlers):
+            handler.flush()
+            handler.close()
+            self.audit_logger.removeHandler(handler)
+
+        try:
+            file_size = AUDIT_LOG_FILE.stat().st_size or 1
+            with open(AUDIT_LOG_FILE, "r+b") as stream:
+                for _ in range(3):
+                    stream.seek(0)
+                    stream.write(os.urandom(file_size))
+                    stream.truncate(file_size)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                retained = "".join(kept).encode("utf-8")
+                stream.seek(0)
+                stream.write(retained)
+                stream.truncate(len(retained))
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(AUDIT_LOG_FILE, 0o600)
+            return True
+        finally:
+            self._setup_audit_logger()
     
     def log_authentication(self, success: bool, method: str = "password"):
         """Log authentication attempt."""
