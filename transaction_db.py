@@ -82,6 +82,15 @@ class TransactionDatabase:
                 CREATE INDEX IF NOT EXISTS idx_employee_id
                 ON transactions(employee_id)
             """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS employee_budgets (
+                    employee_id TEXT PRIMARY KEY,
+                    employee_name TEXT NOT NULL,
+                    opening_spend REAL NOT NULL DEFAULT 0,
+                    spend_limit REAL NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
 
             conn.commit()
             conn.close()
@@ -247,6 +256,82 @@ class TransactionDatabase:
             for transaction in self.get_all_transactions()
             if transaction.get("employee_id") == employee_id
         ]
+
+    def set_employee_budget(
+        self,
+        employee_id: str,
+        employee_name: str,
+        opening_spend: float,
+        spend_limit: float,
+    ) -> bool:
+        if not employee_id or opening_spend < 0 or spend_limit <= 0:
+            return False
+        try:
+            conn = self._get_connection()
+            conn.execute(
+                """
+                INSERT INTO employee_budgets
+                    (employee_id, employee_name, opening_spend, spend_limit, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(employee_id) DO UPDATE SET
+                    employee_name = excluded.employee_name,
+                    opening_spend = excluded.opening_spend,
+                    spend_limit = excluded.spend_limit,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    employee_id,
+                    employee_name,
+                    opening_spend,
+                    spend_limit,
+                    datetime.now().isoformat(),
+                ),
+            )
+            conn.commit()
+            conn.close()
+            self._ensure_permissions()
+            return True
+        except sqlite3.Error as e:
+            logging.error("Failed to save employee budget: %s", e)
+            return False
+
+    def get_employee_budgets(self) -> List[Dict[str, Any]]:
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    b.employee_id,
+                    b.employee_name,
+                    b.opening_spend,
+                    b.spend_limit,
+                    b.opening_spend + COALESCE(SUM(ABS(t.amount)), 0) AS total_spent
+                FROM employee_budgets b
+                LEFT JOIN transactions t ON t.employee_id = b.employee_id
+                GROUP BY
+                    b.employee_id,
+                    b.employee_name,
+                    b.opening_spend,
+                    b.spend_limit
+                ORDER BY b.employee_name
+                """
+            )
+            budgets = [
+                {
+                    "employee_id": row[0],
+                    "employee_name": row[1],
+                    "opening_spend": float(row[2]),
+                    "spend_limit": float(row[3]),
+                    "total_spent": float(row[4]),
+                }
+                for row in cursor.fetchall()
+            ]
+            conn.close()
+            return budgets
+        except sqlite3.Error as e:
+            logging.error("Failed to retrieve employee budgets: %s", e)
+            return []
 
     def delete_transaction(self, transaction_id: int) -> bool:
         try:

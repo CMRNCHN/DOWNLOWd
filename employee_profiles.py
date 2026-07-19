@@ -374,7 +374,14 @@ class ProfileSyncService:
             raise KeyError(employee_id)
         bundle: Dict[str, Dict[str, Any]] = {}
         for role, ref in (profile.get("vault_refs") or {}).items():
-            bundle[role] = self.bitwarden.get_item(ref["item_id"])
+            try:
+                bundle[role] = self.bitwarden.get_item(ref["item_id"])
+            except Exception as exc:
+                bundle[role] = {
+                    "_load_error": type(exc).__name__,
+                    "id": ref["item_id"],
+                    "name": role.replace("_", " ").title(),
+                }
         return bundle
 
     def create_login(

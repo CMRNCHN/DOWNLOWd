@@ -17,6 +17,7 @@ dependencies = [
     "selenium>=4.15.0",
     "msal>=1.20.0",
     "tkinterdnd2-universal>=0.5.1",
+    "customtkinter>=6.0.0",
 ]
 
 [project.urls]

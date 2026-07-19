@@ -234,6 +234,29 @@ class TransactionDatabaseTests(unittest.TestCase):
             self.assertEqual(len(transactions), 1)
             self.assertEqual(transactions[0]["employee_name"], "Ada Lovelace")
 
+    def test_employee_budget_combines_opening_spend_and_transactions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = TransactionDatabase(Path(directory) / "transactions.db")
+            self.assertTrue(
+                database.set_employee_budget(
+                    "employee-uuid",
+                    "Ada Lovelace",
+                    125.0,
+                    1000.0,
+                )
+            )
+            database.add_transaction(
+                "2026-07-19",
+                75.0,
+                "Example",
+                "Ada Lovelace",
+                "1111",
+                employee_id="employee-uuid",
+            )
+            budget = database.get_employee_budgets()[0]
+            self.assertEqual(budget["total_spent"], 200.0)
+            self.assertEqual(budget["spend_limit"], 1000.0)
+
 
 class RetentionTests(unittest.TestCase):
     def test_all_overdue_milestones_are_returned_independently(self):
@@ -490,6 +513,13 @@ class OnboardingTests(unittest.TestCase):
                 self.assertEqual(fields[EMPLOYEE_ID_FIELD], employee_id)
                 roles.add(fields[RECORD_ROLE_FIELD])
             self.assertEqual(roles, {"email_login", "identity", "work_card"})
+            identity = next(item for item in items if item["type"] == 2)
+            self.assertEqual(identity["identity"]["firstName"], "Ada")
+            self.assertEqual(identity["identity"]["lastName"], "Lovelace")
+            self.assertIn(
+                "Date of Birth",
+                {field["name"] for field in identity["fields"]},
+            )
 
     def test_failed_import_disposes_generated_json_but_keeps_source(self):
         audit = FakeAudit()
@@ -682,6 +712,35 @@ class EmployeeProfileTests(unittest.TestCase):
                 "identity-1",
             )
 
+    def test_one_stale_vault_reference_does_not_blank_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = self._store(directory)
+            profile = store.upsert(display_name="Ada Lovelace")
+            for role, item_id, item_type in (
+                ("identity", "identity-1", 2),
+                ("work_card", "missing-card", 3),
+            ):
+                store.bind_vault_ref(
+                    profile["employee_id"],
+                    role,
+                    {"id": item_id, "type": item_type, "revisionDate": "r1"},
+                )
+            vault = FakeProfileVault()
+
+            def get_item(item_id):
+                if item_id == "missing-card":
+                    raise RuntimeError("not found")
+                return {
+                    "id": item_id,
+                    "type": 2,
+                    "identity": {"firstName": "Ada"},
+                }
+
+            vault.get_item = get_item
+            bundle = ProfileSyncService(vault, store).get_bundle(profile["employee_id"])
+            self.assertEqual(bundle["identity"]["identity"]["firstName"], "Ada")
+            self.assertEqual(bundle["work_card"]["_load_error"], "RuntimeError")
+
     def test_ambiguous_legacy_records_are_not_guessed(self):
         with tempfile.TemporaryDirectory() as directory:
             store = self._store(directory)
@@ -813,6 +872,28 @@ class EmployeeProfileTests(unittest.TestCase):
         dashboard._clear_profile_secrets()
         self.assertEqual(dashboard.profile_bundle, {})
         self.assertEqual(dashboard._revealed_profile_values, set())
+
+    def test_identity_viewer_includes_native_and_custom_fields(self):
+        rows = Dashboard._identity_view_rows(
+            {
+                "name": "Ada Lovelace — Work Identity",
+                "identity": {
+                    "firstName": "Ada",
+                    "lastName": "Lovelace",
+                    "city": "London",
+                },
+                "fields": [
+                    {"name": "Date of Birth", "value": "12/10/1815"},
+                    {"name": EMPLOYEE_ID_FIELD, "value": "hidden"},
+                    {"name": RECORD_ROLE_FIELD, "value": "identity"},
+                ],
+            }
+        )
+        values = {label: (value, sensitive) for label, value, sensitive in rows}
+        self.assertEqual(values["First name"][0], "Ada")
+        self.assertEqual(values["City"][0], "London")
+        self.assertTrue(values["Date of Birth"][1])
+        self.assertNotIn(EMPLOYEE_ID_FIELD, values)
 
 
 if __name__ == "__main__":
