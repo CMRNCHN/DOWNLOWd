@@ -11,6 +11,11 @@ from unittest import mock
 import integrations
 import onboarding
 import data_retention
+from account_automation import (
+    format_assist_payload,
+    normalize_personal_data,
+    parse_confirmation,
+)
 from employee_profiles import (
     EMPLOYEE_ID_FIELD,
     RECORD_ROLE_FIELD,
@@ -444,6 +449,52 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(account_creator.reset_count, len(expected))
         self.assertTrue(account_creator.closed)
 
+    def test_resume_accounts_retries_then_marks_done(self):
+        retention = make_retention_manager()
+        retention.retention_data["employees"]["Example Employee"] = {
+            "profile": {
+                "first_name": "Example",
+                "last_name": "Employee",
+                "username": "exampleemployee1980",
+                "email": "exampleemployee1980@outlook.com",
+            },
+            "accounts": {
+                "email": "created",
+                "hyatt": "pending",
+                "marriott": "created",
+            },
+        }
+        account_creator = FakeAccountCreator()
+        decisions = iter(["retry", "done"])
+
+        pipeline = Onboarding(
+            FakeBitwarden(),
+            retention_manager=retention,
+            account_creator=account_creator,
+        )
+        pipeline.resume_accounts(
+            "Example Employee",
+            "shared passphrase",
+            OnboardingConfig(
+                bw=BitwardenConfig("Personal Vault"),
+                provision_outlook=False,
+                provision_marriott=False,
+            ),
+            account_confirmation_callback=lambda *_args: next(decisions),
+        )
+        self.assertEqual(
+            account_creator.calls,
+            [
+                ("Hyatt", "exampleemployee1980"),
+                ("Hyatt", "exampleemployee1980"),
+            ],
+        )
+        # One reset after retry, one after Done.
+        self.assertEqual(account_creator.reset_count, 2)
+        accounts = retention.get_employee_profile("Example Employee")["accounts"]
+        self.assertEqual(accounts["hyatt"], "created")
+        self.assertTrue(account_creator.closed)
+
     def test_lockdown_disposes_exact_source_and_generated_json_paths(self):
         audit = FakeAudit()
         disposed = []
@@ -562,6 +613,53 @@ class OnboardingTests(unittest.TestCase):
             self.assertTrue(source.exists())
             self.assertEqual(len(disposed), 1)
             self.assertEqual(disposed[0].parent, temp_dir)
+
+
+class AssistHelpersTests(unittest.TestCase):
+    def test_normalize_personal_data_fills_aliases(self):
+        data = normalize_personal_data(
+            {
+                "full_name": "Ada Lovelace",
+                "email": "ada@example.com",
+                "password": "secret",
+                "zip_code": "02139",
+            }
+        )
+        self.assertEqual(data["first_name"], "Ada")
+        self.assertEqual(data["last_name"], "Lovelace")
+        self.assertEqual(data["username"], "ada@example.com")
+        self.assertEqual(data["confirm_password"], "secret")
+        self.assertEqual(data["postal"], "02139")
+        self.assertEqual(data["country"], "USA")
+
+    def test_format_assist_payload_is_key_value_lines(self):
+        payload = format_assist_payload(
+            {
+                "full_name": "Ada Lovelace",
+                "first_name": "Ada",
+                "last_name": "Lovelace",
+                "email": "ada@example.com",
+                "password": "secret",
+                "postal": "02139",
+            },
+            "adalovelace1815",
+            service="Marriott",
+        )
+        self.assertIn("service: Marriott", payload)
+        self.assertIn("account_name: adalovelace1815", payload)
+        self.assertIn("first_name: Ada", payload)
+        self.assertIn("confirm_password: secret", payload)
+        self.assertIn("postal: 02139", payload)
+        self.assertTrue(all(":" in line for line in payload.splitlines()))
+
+    def test_parse_confirmation_accepts_bool_and_strings(self):
+        self.assertEqual(parse_confirmation(True), "done")
+        self.assertEqual(parse_confirmation(False), "skip")
+        self.assertEqual(parse_confirmation(None), "skip")
+        self.assertEqual(parse_confirmation("done"), "done")
+        self.assertEqual(parse_confirmation("retry"), "retry")
+        self.assertEqual(parse_confirmation("skip"), "skip")
+        self.assertEqual(parse_confirmation("yes"), "done")
 
 
 class BitwardenItemApiTests(unittest.TestCase):

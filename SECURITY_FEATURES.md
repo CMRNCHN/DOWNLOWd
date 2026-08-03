@@ -87,7 +87,7 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 | `data_retention.py` | Retention schedule + shred |
 | `employee_profiles.py` | UUID profile metadata, reconciliation, edit, trash/restore/purge |
 | `audit_logger.py` | Audit trail |
-| `account_automation.py` | Partner Selenium prefill + clipboard/browser fallback |
+| `account_automation.py` | Assisted partner signup: Selenium prefill, bot-block handoff, clipboard/hotkey palette |
 
 ## Dependencies
 

@@ -60,10 +60,18 @@ pip install -e .
 ### Run
 
 ```bash
+source .venv/bin/activate   # or: .venv/bin/python run.py
 python3 run.py
 ```
 
 App-password and Bitwarden authentication happen inside the app. The Bitwarden CLI session key is kept in memory and passed to subsequent `bw` calls via `BW_SESSION`.
+
+**Launch checklist**
+
+1. Bitwarden CLI on PATH (`bw --version`) and vault unlockable
+2. Shared employee passphrase ready (8+ chars)
+3. For ⌘1–⌘6 paste into signup fields: grant **Accessibility** to Terminal/Python (or the DOWNLOWd app) in System Settings → Privacy & Security
+4. Optional Selenium prefill: install `chromedriver` on PATH (or set `DOWNLOWD_CHROMEDRIVER`). Without it, signup uses system-browser handoff + the assist panel (recommended default when sites bot-block automation)
 
 ### Build installer
 
@@ -76,8 +84,8 @@ chmod +x build.sh
 ## Honest limitations
 
 - Transaction DB is **plaintext SQLite** with `chmod 600` — enable **FileVault** on macOS (the app warns at launch if FileVault is Off). Full SQLCipher encryption is future work.
-- Partner provisioning reuses one managed Chrome window. Each signup pauses for an in-app completion checkpoint; Outlook must be confirmed before that employee advances to Hyatt or Marriott.
-- Autofill is best-effort because signup forms and anti-bot controls change. CAPTCHA and final submission always remain manual.
+- Partner signup is **assisted**, not fully automated: DOWNLOWd opens the page, prefills what it can (or hands off to the system browser on bot blocks), and shows an in-app Account assist panel with per-field Copy/Paste plus ⌘1–⌘6 hotkeys. CAPTCHA and final submit always stay with you.
+- Outlook must be marked Done before Hyatt/Marriott for that employee; Skip leaves accounts pending; Retry recreates the signup attempt.
+- Structured clipboard payloads (`key: value` lines) are Keysmith-ready if you want an optional overlay macro — Keysmith is not required, and there is no KeyCue integration.
 - Day-20 log retention shreds **tracked** log paths and per-employee `logs/employees/<name>/` dirs; shared session logs are line-scrubbed (not whole-file deleted).
-- Partner provisioning is **browser handoff**, not fully automated signup
 - No Microsoft Graph email provisioning in this build

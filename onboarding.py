@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from account_automation import AccountCreator
+from account_automation import AccountCreator, parse_confirmation
 from audit_logger import get_audit_logger
 from bw_import_converter import convert_file_to_bitwarden_json
 from data_retention import DataRetentionManager
@@ -226,41 +226,51 @@ class Onboarding:
                 }
             )
 
-        def confirmed(service: str, record: Dict[str, Any], result: Dict[str, Any]) -> bool:
-            if account_confirmation_callback is None:
-                return True
-            return bool(
-                account_confirmation_callback(
-                    service,
-                    record["employee"],
-                    result,
-                )
-            )
-
         def reset_browser_session() -> None:
             reset_browser = getattr(self.account_creator, "reset_browser_session", None)
             if reset_browser:
                 reset_browser()
 
+        def run_service(
+            service: str,
+            record: Dict[str, Any],
+            create_fn: Any,
+            *,
+            progress_label: str,
+        ) -> bool:
+            while True:
+                progress("accounts", progress_label)
+                result = create_fn(record["personal_data"], record["account_name"])
+                decision = self._await_account_decision(
+                    service,
+                    record["employee"],
+                    result,
+                    account_confirmation_callback,
+                )
+                if decision == "retry":
+                    reset_browser_session()
+                    continue
+                created = decision == "done"
+                reset_browser_session()
+                return created
+
         email_ready = list(account_records) if not config.provision_outlook else []
         try:
             if config.provision_outlook:
                 for index, record in enumerate(account_records, start=1):
-                    progress(
-                        "accounts",
-                        f"Outlook {index}/{len(account_records)} — {record['account_name']}",
+                    is_confirmed = run_service(
+                        "Outlook",
+                        record,
+                        self.account_creator.create_outlook_account,
+                        progress_label=(
+                            f"Outlook {index}/{len(account_records)} — {record['account_name']}"
+                        ),
                     )
-                    result = self.account_creator.create_outlook_account(
-                        record["personal_data"],
-                        record["account_name"],
-                    )
-                    is_confirmed = confirmed("Outlook", record, result)
                     self._save_account_progress(
                         record["employee"]["full_name"],
                         "email",
                         is_confirmed,
                     )
-                    reset_browser_session()
                     if is_confirmed:
                         email_ready.append(record)
                     else:
@@ -271,15 +281,14 @@ class Onboarding:
 
             if config.provision_hyatt:
                 for index, record in enumerate(email_ready, start=1):
-                    progress(
-                        "accounts",
-                        f"Hyatt {index}/{len(email_ready)} — {record['account_name']}",
+                    hyatt_confirmed = run_service(
+                        "Hyatt",
+                        record,
+                        self.account_creator.create_hyatt_account,
+                        progress_label=(
+                            f"Hyatt {index}/{len(email_ready)} — {record['account_name']}"
+                        ),
                     )
-                    result = self.account_creator.create_hyatt_account(
-                        record["personal_data"],
-                        record["account_name"],
-                    )
-                    hyatt_confirmed = confirmed("Hyatt", record, result)
                     self._save_account_progress(
                         record["employee"]["full_name"],
                         "hyatt",
@@ -293,19 +302,17 @@ class Onboarding:
                             password,
                             "https://www.hyatt.com/",
                         )
-                    reset_browser_session()
 
             if config.provision_marriott:
                 for index, record in enumerate(email_ready, start=1):
-                    progress(
-                        "accounts",
-                        f"Marriott {index}/{len(email_ready)} — {record['account_name']}",
+                    marriott_confirmed = run_service(
+                        "Marriott",
+                        record,
+                        self.account_creator.create_marriott_account,
+                        progress_label=(
+                            f"Marriott {index}/{len(email_ready)} — {record['account_name']}"
+                        ),
                     )
-                    result = self.account_creator.create_marriott_account(
-                        record["personal_data"],
-                        record["account_name"],
-                    )
-                    marriott_confirmed = confirmed("Marriott", record, result)
                     self._save_account_progress(
                         record["employee"]["full_name"],
                         "marriott",
@@ -319,7 +326,6 @@ class Onboarding:
                             password,
                             "https://www.marriott.com/",
                         )
-                    reset_browser_session()
         finally:
             close_browser = getattr(self.account_creator, "close_browser", None)
             if close_browser:
@@ -345,6 +351,20 @@ class Onboarding:
         )
         progress("done", f"{employee_count} employee(s)")
         logging.info("--- Onboarding pipeline complete (%d employees). ---", employee_count)
+
+    @staticmethod
+    def _await_account_decision(
+        service: str,
+        employee: Dict[str, str],
+        result: Dict[str, Any],
+        account_confirmation_callback: Optional[Any],
+    ) -> str:
+        """Return done | skip | retry from the GUI (or auto-done when no callback)."""
+        if account_confirmation_callback is None:
+            return "done"
+        return parse_confirmation(
+            account_confirmation_callback(service, employee, result)
+        )
 
     def _save_account_progress(
         self,
@@ -432,27 +452,36 @@ class Onboarding:
             if progress_callback:
                 progress_callback("accounts", detail)
 
-        def confirm(service: str, result: Dict[str, Any]) -> bool:
-            if account_confirmation_callback is None:
-                return True
-            return bool(account_confirmation_callback(service, employee, result))
-
         def reset_browser() -> None:
             callback = getattr(self.account_creator, "reset_browser_session", None)
             if callback:
                 callback()
 
+        def run_service(service: str, create_fn: Any) -> bool:
+            while True:
+                progress(service)
+                result = create_fn(personal_data, account_name)
+                decision = self._await_account_decision(
+                    service,
+                    employee,
+                    result,
+                    account_confirmation_callback,
+                )
+                if decision == "retry":
+                    reset_browser()
+                    continue
+                created = decision == "done"
+                reset_browser()
+                return created
+
         try:
             email_created = accounts.get("email") == "created"
             if config.provision_outlook and not email_created:
-                progress("Outlook")
-                result = self.account_creator.create_outlook_account(
-                    personal_data,
-                    account_name,
+                email_created = run_service(
+                    "Outlook",
+                    self.account_creator.create_outlook_account,
                 )
-                email_created = confirm("Outlook", result)
                 self._save_account_progress(employee_name, "email", email_created)
-                reset_browser()
 
             if not email_created:
                 raise RuntimeError(
@@ -460,12 +489,7 @@ class Onboarding:
                 )
 
             if config.provision_hyatt and accounts.get("hyatt") != "created":
-                progress("Hyatt")
-                result = self.account_creator.create_hyatt_account(
-                    personal_data,
-                    account_name,
-                )
-                created = confirm("Hyatt", result)
+                created = run_service("Hyatt", self.account_creator.create_hyatt_account)
                 self._save_account_progress(employee_name, "hyatt", created)
                 if created:
                     self._bind_created_account(
@@ -475,15 +499,12 @@ class Onboarding:
                         password,
                         "https://www.hyatt.com/",
                     )
-                reset_browser()
 
             if config.provision_marriott and accounts.get("marriott") != "created":
-                progress("Marriott")
-                result = self.account_creator.create_marriott_account(
-                    personal_data,
-                    account_name,
+                created = run_service(
+                    "Marriott",
+                    self.account_creator.create_marriott_account,
                 )
-                created = confirm("Marriott", result)
                 self._save_account_progress(employee_name, "marriott", created)
                 if created:
                     self._bind_created_account(
@@ -493,7 +514,6 @@ class Onboarding:
                         password,
                         "https://www.marriott.com/",
                     )
-                reset_browser()
         finally:
             close_browser = getattr(self.account_creator, "close_browser", None)
             if close_browser:

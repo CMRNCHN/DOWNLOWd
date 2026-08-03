@@ -1,15 +1,17 @@
 """
-Account Creation Automation Module
-Selenium form prefill with clipboard + browser-handoff fallback.
+Assisted partner signup: best-effort Selenium prefill, structured clipboard
+payload, and macOS paste helpers for an in-app field palette (Keysmith-ready).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 import webbrowser
-from typing import Any, Dict, List, Tuple
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from selenium import webdriver
@@ -21,13 +23,48 @@ try:
     _SELENIUM_AVAILABLE = True
 except ImportError:
     _SELENIUM_AVAILABLE = False
+
     class By:  # type: ignore[no-redef]
         ID = "id"
         NAME = "name"
         CSS_SELECTOR = "css selector"
+        XPATH = "xpath"
 
 
-def _copy_to_clipboard(text: str) -> bool:
+# Hotkey contract (⌘1…⌘6) — order is stable for Keysmith macros.
+ASSIST_FIELD_KEYS: Tuple[str, ...] = (
+    "first_name",
+    "last_name",
+    "email",
+    "password",
+    "confirm_password",
+    "postal",
+)
+
+ASSIST_FIELD_LABELS: Dict[str, str] = {
+    "first_name": "First",
+    "last_name": "Last",
+    "email": "Email",
+    "password": "Password",
+    "confirm_password": "Confirm",
+    "postal": "Zip",
+    "username": "Username",
+}
+
+_BOT_MARKERS = (
+    "e6020",
+    "access denied",
+    "unusual traffic",
+    "bot detection",
+    "please verify you are a human",
+    "attention required",
+    "cf-browser-verification",
+    "akamai",
+    "your browser did something unexpected",
+)
+
+
+def copy_to_clipboard(text: str) -> bool:
     """Best-effort clipboard copy (macOS pbcopy / Linux xclip)."""
     try:
         if sys.platform == "darwin":
@@ -43,33 +80,144 @@ def _copy_to_clipboard(text: str) -> bool:
         return False
 
 
-def _clipboard_payload(personal_data: Dict[str, str], account_name: str) -> str:
+# Back-compat alias.
+_copy_to_clipboard = copy_to_clipboard
+
+
+def normalize_personal_data(personal_data: Dict[str, str]) -> Dict[str, str]:
+    """Fill first/last/confirm/postal aliases used by fill maps and the palette."""
+    data = {str(k): str(v) if v is not None else "" for k, v in personal_data.items()}
+    full = data.get("full_name", "").strip()
+    first = data.get("first_name", "").strip()
+    last = data.get("last_name", "").strip()
+    if not first and full:
+        first = full.split(" ", 1)[0]
+    if not last and full and " " in full:
+        last = full.split(" ", 1)[1]
+    postal = (
+        data.get("postal")
+        or data.get("postal_code")
+        or data.get("zip")
+        or data.get("zip_code")
+        or ""
+    ).strip()
+    password = data.get("password", "")
+    email = data.get("email") or data.get("username") or ""
+    username = data.get("username") or email
+    return {
+        **data,
+        "first_name": first,
+        "last_name": last,
+        "email": email,
+        "username": username,
+        "password": password,
+        "confirm_password": data.get("confirm_password") or password,
+        "postal": postal,
+        "country": data.get("country") or data.get("country_region") or "USA",
+    }
+
+
+def format_assist_payload(
+    personal_data: Dict[str, str],
+    account_name: str,
+    *,
+    service: str = "",
+) -> str:
+    """
+    Structured clipboard payload (Keysmith-ready).
+
+    One `key: value` line per field. Macros and humans can parse the same text.
+    """
+    data = normalize_personal_data(personal_data)
     lines = [
+        f"service: {service}" if service else None,
         f"account_name: {account_name}",
-        f"full_name: {personal_data.get('full_name', '')}",
-        f"first_name: {personal_data.get('first_name', '')}",
-        f"last_name: {personal_data.get('last_name', '')}",
-        f"email: {personal_data.get('email', '')}",
-        f"password: {personal_data.get('password', '')}",
+        f"full_name: {data.get('full_name', '')}",
+        f"first_name: {data.get('first_name', '')}",
+        f"last_name: {data.get('last_name', '')}",
+        f"email: {data.get('email', '')}",
+        f"username: {data.get('username', '')}",
+        f"password: {data.get('password', '')}",
+        f"confirm_password: {data.get('confirm_password', '')}",
+        f"postal: {data.get('postal', '')}",
+        f"country: {data.get('country', '')}",
     ]
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line is not None)
+
+
+def assist_field_value(personal_data: Dict[str, str], field_key: str) -> str:
+    data = normalize_personal_data(personal_data)
+    if field_key == "email":
+        return data.get("email") or data.get("username") or ""
+    return data.get(field_key, "")
+
+
+def paste_field_value(value: str) -> bool:
+    """
+    Copy `value` to the clipboard and Cmd+V into the frontmost app (macOS).
+
+    Requires Accessibility permission for DOWNLOWd / Terminal / Python.
+    """
+    if not value:
+        return False
+    if not _copy_to_clipboard(value):
+        return False
+    if sys.platform != "darwin":
+        return True
+    script = (
+        'tell application "System Events" to keystroke "v" using command down'
+    )
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def parse_confirmation(result: Any) -> str:
+    """Normalize callback returns to done | skip | retry."""
+    if result is True:
+        return "done"
+    if result is False or result is None:
+        return "skip"
+    text = str(result).strip().lower()
+    if text in {"done", "yes", "true", "created", "confirm"}:
+        return "done"
+    if text in {"retry", "again"}:
+        return "retry"
+    return "skip"
+
+
+def _chromedriver_on_path() -> bool:
+    """True when a usable chromedriver binary is already available."""
+    if os.environ.get("DOWNLOWD_CHROMEDRIVER"):
+        return os.path.exists(os.environ["DOWNLOWD_CHROMEDRIVER"])
+    from shutil import which
+
+    return which("chromedriver") is not None
 
 
 class AccountCreator:
     """Prefills partner signup forms via Selenium; falls back to browser handoff."""
 
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, *, prefer_system_browser: Optional[bool] = None):
         self.headless = headless
+        # Prefer system browser when chromedriver isn't installed — avoids Selenium Manager hangs.
+        if prefer_system_browser is None:
+            prefer_system_browser = not _chromedriver_on_path()
+        self.prefer_system_browser = prefer_system_browser
         self._driver = None
+        self._selenium_disabled = False
+        self.last_payload: str = ""
+        self.last_personal_data: Dict[str, str] = {}
 
-    def _get_browser(self):
-        if self._driver is not None:
-            try:
-                _ = self._driver.current_url
-                return self._driver
-            except Exception:
-                self._driver = None
-
+    def _build_chrome_options(self) -> "Options":
         options = Options()
         if self.headless:
             options.add_argument("--headless=new")
@@ -79,7 +227,43 @@ class AccountCreator:
         options.add_argument("--window-size=1280,900")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        self._driver = webdriver.Chrome(options=options)
+        chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        if sys.platform == "darwin" and os.path.exists(chrome_bin):
+            options.binary_location = chrome_bin
+        return options
+
+    def _get_browser(self):
+        if self._driver is not None:
+            try:
+                _ = self._driver.current_url
+                return self._driver
+            except Exception:
+                self._driver = None
+
+        options = self._build_chrome_options()
+        service = None
+        driver_path = os.environ.get("DOWNLOWD_CHROMEDRIVER") or ""
+        if driver_path and os.path.exists(driver_path):
+            from selenium.webdriver.chrome.service import Service
+
+            service = Service(executable_path=driver_path)
+
+        def launch():
+            if service is not None:
+                return webdriver.Chrome(service=service, options=options)
+            return webdriver.Chrome(options=options)
+
+        # Selenium Manager can hang when chromedriver is missing/offline.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(launch)
+            try:
+                self._driver = future.result(timeout=20)
+            except FuturesTimeout as exc:
+                future.cancel()
+                self._selenium_disabled = True
+                raise WebDriverException(
+                    "Chrome driver startup timed out after 20s"
+                ) from exc
         return self._driver
 
     @staticmethod
@@ -100,6 +284,23 @@ class AccountCreator:
             except WebDriverException:
                 continue
         driver.switch_to.default_content()
+        return False
+
+    @staticmethod
+    def _page_looks_blocked(driver) -> bool:
+        try:
+            source = (driver.page_source or "").lower()
+        except WebDriverException:
+            return True
+        if any(marker in source for marker in _BOT_MARKERS):
+            return True
+        title = ""
+        try:
+            title = (driver.title or "").lower()
+        except WebDriverException:
+            return True
+        if "access denied" in title or "denied" == title.strip():
+            return True
         return False
 
     def _fill_first_match(self, driver, selectors: List[Tuple[str, str]], value: str) -> bool:
@@ -141,25 +342,58 @@ class AccountCreator:
         except WebDriverException:
             self.close_browser()
 
-    def _handoff(self, service: str, signup_url: str, personal_data: Dict[str, str], account_name: str) -> Dict[str, Any]:
-        payload = _clipboard_payload(personal_data, account_name)
-        copied = _copy_to_clipboard(payload)
+    def _prepare_payload(
+        self,
+        service: str,
+        personal_data: Dict[str, str],
+        account_name: str,
+    ) -> Tuple[Dict[str, str], str, bool]:
+        data = normalize_personal_data(personal_data)
+        payload = format_assist_payload(data, account_name, service=service)
+        self.last_personal_data = data
+        self.last_payload = payload
+        return data, payload, _copy_to_clipboard(payload)
+
+    def _handoff(
+        self,
+        service: str,
+        signup_url: str,
+        personal_data: Dict[str, str],
+        account_name: str,
+        *,
+        status: str = "manual_only",
+        message: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        data, payload, copied = self._prepare_payload(service, personal_data, account_name)
         try:
             webbrowser.open(signup_url)
         except Exception as e:
-            return {"service": service, "status": "error", "error": str(e), "url": signup_url}
+            return {
+                "service": service,
+                "status": "error",
+                "error": str(e),
+                "url": signup_url,
+                "account_name": account_name,
+                "personal_data": data,
+                "payload": payload,
+                "filled_fields": [],
+                "clipboard_prepared": copied,
+            }
         return {
             "service": service,
-            "status": "manual_completion_required",
+            "status": status,
             "url": signup_url,
             "account_name": account_name,
+            "personal_data": data,
+            "payload": payload,
+            "filled_fields": [],
             "clipboard_prepared": copied,
-            "message": (
-                "Opened signup page. Field values were copied to the clipboard "
-                if copied
-                else "Opened signup page. Complete signup manually "
-            )
-            + "(complete captcha / remaining fields yourself).",
+            "assist_fields": list(ASSIST_FIELD_KEYS),
+            "message": message
+            or (
+                "Opened signup in the system browser. Use the assist panel "
+                "(⌘1–⌘6) to paste fields. Complete captcha and submit yourself."
+            ),
         }
 
     def _prefill_or_handoff(
@@ -170,82 +404,167 @@ class AccountCreator:
         account_name: str,
         field_map: Dict[str, List[Tuple[str, str]]],
     ) -> Dict[str, Any]:
-        if not _SELENIUM_AVAILABLE:
-            logging.warning("%s: Selenium unavailable; using browser handoff", service)
-            return self._handoff(service, signup_url, personal_data, account_name)
+        data, payload, copied = self._prepare_payload(service, personal_data, account_name)
+
+        if (
+            not _SELENIUM_AVAILABLE
+            or self.prefer_system_browser
+            or self._selenium_disabled
+        ):
+            reason = (
+                "Selenium unavailable"
+                if not _SELENIUM_AVAILABLE
+                else "no chromedriver / Selenium disabled"
+            )
+            logging.info("%s: %s; using system browser handoff", service, reason)
+            return self._handoff(
+                service,
+                signup_url,
+                data,
+                account_name,
+                status="manual_only",
+                message=(
+                    f"{reason}. System browser opened; use the assist panel "
+                    "(⌘1–⌘6) to paste fields."
+                ),
+            )
 
         filled: List[str] = []
         try:
             driver = self._get_browser()
             wait = WebDriverWait(driver, 15)
             driver.get(signup_url)
-            wait.until(lambda current: current.execute_script("return document.readyState") == "complete")
+            wait.until(
+                lambda current: current.execute_script("return document.readyState") == "complete"
+            )
+            if self._page_looks_blocked(driver):
+                logging.warning("%s: bot wall detected for %s; system browser handoff", service, account_name)
+                self.close_browser()
+                return self._handoff(
+                    service,
+                    signup_url,
+                    data,
+                    account_name,
+                    status="bot_blocked",
+                    message=(
+                        "Signup page blocked automated Chrome. Opened system browser; "
+                        "use the assist panel (⌘1–⌘6) to paste fields."
+                    ),
+                )
             try:
                 wait.until(self._focus_form_context)
             except WebDriverException:
                 driver.switch_to.default_content()
+
+            if self._page_looks_blocked(driver) or not self._focus_form_context(driver):
+                logging.warning("%s: no usable form for %s; system browser handoff", service, account_name)
+                self.close_browser()
+                return self._handoff(
+                    service,
+                    signup_url,
+                    data,
+                    account_name,
+                    status="bot_blocked",
+                    message=(
+                        "No fillable form found (likely bot protection). "
+                        "System browser opened; use the assist panel."
+                    ),
+                )
+
             for field, selectors in field_map.items():
-                value = personal_data.get(field, "")
+                value = data.get(field, "")
                 if self._fill_first_match(driver, selectors, value):
                     filled.append(field)
 
-            _copy_to_clipboard(_clipboard_payload(personal_data, account_name))
+            if not filled:
+                logging.warning("%s: prefill matched nothing for %s; system browser handoff", service, account_name)
+                self.close_browser()
+                return self._handoff(
+                    service,
+                    signup_url,
+                    data,
+                    account_name,
+                    status="manual_only",
+                    message=(
+                        "Could not autofill any fields. System browser opened; "
+                        "use the assist panel (⌘1–⌘6)."
+                    ),
+                )
+
+            _copy_to_clipboard(payload)
             logging.info("%s: prefilled %s for %s (browser left open)", service, filled, account_name)
             return {
                 "service": service,
-                "status": "prefilled_awaiting_manual",
+                "status": "prefilled",
                 "url": signup_url,
                 "account_name": account_name,
+                "personal_data": data,
+                "payload": payload,
                 "filled_fields": filled,
                 "clipboard_prepared": True,
+                "assist_fields": list(ASSIST_FIELD_KEYS),
                 "message": (
-                    f"Prefill attempted for {', '.join(filled) or 'no fields'}. "
-                    "Complete captcha and submit in the open browser window. "
-                    "Field values were also copied to the clipboard."
+                    f"Prefill filled: {', '.join(filled)}. "
+                    "Finish captcha/submit in the open Chrome window, "
+                    "or use the assist panel for remaining fields."
                 ),
             }
         except WebDriverException as e:
             logging.error("%s Selenium failed for %s: %s", service, account_name, e)
             self.close_browser()
-            return self._handoff(service, signup_url, personal_data, account_name)
+            return self._handoff(
+                service,
+                signup_url,
+                data,
+                account_name,
+                status="manual_only",
+                message=f"Chrome automation failed ({e}). System browser opened; use assist panel.",
+            )
 
     def create_outlook_account(self, personal_data: Dict[str, str], account_name: str) -> Dict[str, Any]:
         logging.info("Starting Outlook account creation for %s", account_name)
+        data = normalize_personal_data(personal_data)
+        # Outlook step 1 wants the local part or full email in MemberName.
+        if data.get("username") and "@" not in data["username"]:
+            data = {**data, "username": data["username"]}
         field_map = {
             "username": [
                 (By.NAME, "MemberName"),
                 (By.ID, "usernameInput"),
+                (By.ID, "MemberName"),
                 (By.CSS_SELECTOR, "input[type='email']"),
                 (By.CSS_SELECTOR, "input[autocomplete='username']"),
+                (By.CSS_SELECTOR, "input[name='loginfmt']"),
+            ],
+            "email": [
+                (By.NAME, "MemberName"),
+                (By.ID, "usernameInput"),
+                (By.CSS_SELECTOR, "input[type='email']"),
             ],
         }
         return self._prefill_or_handoff(
             "Outlook",
             "https://signup.live.com/",
-            personal_data,
+            data,
             account_name,
             field_map,
         )
 
     def create_hyatt_account(self, personal_data: Dict[str, str], account_name: str) -> Dict[str, Any]:
         logging.info("Starting Hyatt account creation for %s", account_name)
-        first = personal_data.get("first_name") or (personal_data.get("full_name") or "").split(" ", 1)[0]
-        last = personal_data.get("last_name") or (
-            (personal_data.get("full_name") or "").split(" ", 1)[1]
-            if " " in (personal_data.get("full_name") or "")
-            else ""
-        )
-        data = {**personal_data, "first_name": first, "last_name": last}
+        data = normalize_personal_data(personal_data)
         field_map = {
             "first_name": [
                 (By.ID, "firstName"),
                 (By.NAME, "firstName"),
                 (By.CSS_SELECTOR, "input[autocomplete='given-name']"),
+                (By.CSS_SELECTOR, "input[name*='first']"),
             ],
             "last_name": [
                 (By.ID, "lastName"),
                 (By.NAME, "lastName"),
                 (By.CSS_SELECTOR, "input[autocomplete='family-name']"),
+                (By.CSS_SELECTOR, "input[name*='last']"),
             ],
             "email": [
                 (By.ID, "email"),
@@ -258,6 +577,12 @@ class AccountCreator:
                 (By.NAME, "password"),
                 (By.CSS_SELECTOR, "input[type='password']"),
                 (By.CSS_SELECTOR, "input[autocomplete='new-password']"),
+            ],
+            "confirm_password": [
+                (By.ID, "confirmPassword"),
+                (By.NAME, "confirmPassword"),
+                (By.CSS_SELECTOR, "input[autocomplete='new-password']"),
+                (By.XPATH, "(//input[@type='password'])[2]"),
             ],
         }
         return self._prefill_or_handoff(
@@ -270,35 +595,61 @@ class AccountCreator:
 
     def create_marriott_account(self, personal_data: Dict[str, str], account_name: str) -> Dict[str, Any]:
         logging.info("Starting Marriott account creation for %s", account_name)
-        first = personal_data.get("first_name") or (personal_data.get("full_name") or "").split(" ", 1)[0]
-        last = personal_data.get("last_name") or (
-            (personal_data.get("full_name") or "").split(" ", 1)[1]
-            if " " in (personal_data.get("full_name") or "")
-            else ""
-        )
-        data = {**personal_data, "first_name": first, "last_name": last}
+        data = normalize_personal_data(personal_data)
         field_map = {
             "first_name": [
                 (By.ID, "firstName"),
                 (By.NAME, "firstName"),
                 (By.CSS_SELECTOR, "input[autocomplete='given-name']"),
+                (By.CSS_SELECTOR, "input[id*='firstName']"),
+                (By.CSS_SELECTOR, "input[name*='firstName']"),
             ],
             "last_name": [
                 (By.ID, "lastName"),
                 (By.NAME, "lastName"),
                 (By.CSS_SELECTOR, "input[autocomplete='family-name']"),
+                (By.CSS_SELECTOR, "input[id*='lastName']"),
+                (By.CSS_SELECTOR, "input[name*='lastName']"),
             ],
             "email": [
                 (By.ID, "email"),
                 (By.NAME, "email"),
                 (By.CSS_SELECTOR, "input[type='email']"),
                 (By.CSS_SELECTOR, "input[autocomplete='email']"),
+                (By.CSS_SELECTOR, "input[id*='email']"),
             ],
             "password": [
                 (By.ID, "password"),
                 (By.NAME, "password"),
-                (By.CSS_SELECTOR, "input[type='password']"),
                 (By.CSS_SELECTOR, "input[autocomplete='new-password']"),
+                (By.XPATH, "(//input[@type='password'])[1]"),
+            ],
+            "confirm_password": [
+                (By.ID, "confirmPassword"),
+                (By.NAME, "confirmPassword"),
+                (By.ID, "passwordConfirm"),
+                (By.NAME, "passwordConfirm"),
+                (By.CSS_SELECTOR, "input[id*='confirm'][type='password']"),
+                (By.XPATH, "(//input[@type='password'])[2]"),
+            ],
+            "postal": [
+                (By.ID, "postalCode"),
+                (By.NAME, "postalCode"),
+                (By.ID, "zipCode"),
+                (By.NAME, "zipCode"),
+                (By.CSS_SELECTOR, "input[autocomplete='postal-code']"),
+                (By.CSS_SELECTOR, "input[id*='postal']"),
+                (By.CSS_SELECTOR, "input[id*='zip']"),
+                (By.CSS_SELECTOR, "input[name*='postal']"),
+                (By.CSS_SELECTOR, "input[name*='zip']"),
+            ],
+            "country": [
+                (By.ID, "country"),
+                (By.NAME, "country"),
+                (By.ID, "countryCode"),
+                (By.NAME, "countryCode"),
+                (By.CSS_SELECTOR, "select[autocomplete='country']"),
+                (By.CSS_SELECTOR, "select[id*='country']"),
             ],
         }
         return self._prefill_or_handoff(

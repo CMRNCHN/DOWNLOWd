@@ -34,6 +34,14 @@ except Exception:
     TkinterDnD = None  # type: ignore
     _DND_AVAILABLE = False
 
+from account_automation import (
+    ASSIST_FIELD_KEYS,
+    ASSIST_FIELD_LABELS,
+    assist_field_value,
+    copy_to_clipboard,
+    format_assist_payload,
+    paste_field_value,
+)
 from audit_logger import get_audit_logger
 from data_retention import DataRetentionManager
 from employee_profiles import (
@@ -55,24 +63,36 @@ from transaction_db import TransactionDatabase
 
 DOWNLOADS = Path.home() / "Downloads"
 
-# Quiet zinc workspace palette: paper-white surfaces on a cool gray desktop.
+# Honest ops desk — blotter, paper cards, ink, muted olive accent.
 C = {
-    "bg": "#f4f4f5",
-    "surface": "#fafafa",
-    "card": "#ffffff",
-    "card_hi": "#f4f4f5",
-    "border": "#e4e4e7",
-    "text": "#18181b",
-    "muted": "#71717a",
-    "accent": "#18181b",
-    "accent_dim": "#e4e4e7",
-    "success": "#16a34a",
-    "warn": "#ca8a04",
-    "danger": "#dc2626",
+    "bg": "#dfe3e8",
+    "surface": "#e8ebe6",
+    "card": "#f4f5f2",
+    "card_hi": "#d8dcd4",
+    "border": "#b8bfb4",
+    "text": "#141414",
+    "muted": "#5c6359",
+    "accent": "#3d5a45",
+    "accent_hover": "#2f4636",
+    "accent_dim": "#e2ebe4",
+    "success": "#2f6b4a",
+    "warn": "#8a6a2b",
+    "danger": "#8b2e2e",
+    "ink": "#141414",
+    "paper": "#f4f5f2",
+    "status": "#8a9186",
 }
 
+# System UI for chrome; Menlo for brand, captions, vault data.
+F_DISPLAY = ("Helvetica Neue", 17, "bold")
+F_TITLE = ("Helvetica Neue", 13, "bold")
+F_BODY = ("Helvetica Neue", 12)
+F_CAPTION = ("Menlo", 9)
+F_DATA = ("Menlo", 10)
+F_BRAND = ("Menlo", 14, "bold")
+
 ctk.set_appearance_mode("light")
-ctk.set_default_color_theme("blue")
+ctk.set_default_color_theme("green")
 
 
 def _filevault_status() -> tuple[Optional[bool], str]:
@@ -108,77 +128,78 @@ def apply_theme(root: tk.Tk) -> ttk.Style:
     style.configure("TFrame", background=C["card"])
     style.configure("Card.TFrame", background=C["surface"])
     style.configure("Surface.TFrame", background=C["surface"])
-    style.configure("TLabel", background=C["card"], foreground=C["text"], font=("SF Pro Text", 13))
-    style.configure("Muted.TLabel", background=C["card"], foreground=C["muted"], font=("SF Pro Text", 12))
-    style.configure("Title.TLabel", background=C["card"], foreground=C["text"], font=("SF Pro Display", 22, "bold"))
-    style.configure("Subtitle.TLabel", background=C["card"], foreground=C["muted"], font=("SF Pro Text", 13))
-    style.configure("CardTitle.TLabel", background=C["surface"], foreground=C["text"], font=("SF Pro Text", 12, "bold"))
-    style.configure("CardMuted.TLabel", background=C["surface"], foreground=C["muted"], font=("SF Pro Text", 11))
-    style.configure("Icon.TLabel", background=C["surface"], foreground=C["accent"], font=("SF Pro Display", 28))
-    style.configure("Drop.TLabel", background=C["card"], foreground=C["text"], font=("SF Pro Text", 13, "bold"))
-    style.configure("TButton", background=C["surface"], foreground=C["text"], padding=(14, 8), font=("SF Pro Text", 12))
+    style.configure("TLabel", background=C["card"], foreground=C["text"], font=("Helvetica Neue", 12))
+    style.configure("Muted.TLabel", background=C["card"], foreground=C["muted"], font=("Helvetica Neue", 11))
+    style.configure("Title.TLabel", background=C["card"], foreground=C["text"], font=("Helvetica Neue", 18, "bold"))
+    style.configure("Subtitle.TLabel", background=C["card"], foreground=C["muted"], font=("Helvetica Neue", 12))
+    style.configure("CardTitle.TLabel", background=C["surface"], foreground=C["text"], font=("Helvetica Neue", 12, "bold"))
+    style.configure("CardMuted.TLabel", background=C["surface"], foreground=C["muted"], font=("Menlo", 10))
+    style.configure("Icon.TLabel", background=C["surface"], foreground=C["accent"], font=("Menlo", 22, "bold"))
+    style.configure("Drop.TLabel", background=C["card"], foreground=C["text"], font=("Helvetica Neue", 12, "bold"))
+    style.configure("TButton", background=C["surface"], foreground=C["text"], padding=(14, 8), font=("Helvetica Neue", 11))
     style.map("TButton", background=[("active", C["card_hi"])])
     style.configure(
         "Accent.TButton",
-        background=C["text"],
-        foreground="#ffffff",
+        background=C["accent"],
+        foreground=C["paper"],
         padding=(16, 10),
-        font=("SF Pro Text", 13, "bold"),
+        font=("Helvetica Neue", 12, "bold"),
     )
-    style.map("Accent.TButton", background=[("active", "#3f3f46")])
+    style.map("Accent.TButton", background=[("active", C["accent_hover"])])
     style.configure("TEntry", fieldbackground=C["card"], foreground=C["text"], insertcolor=C["text"])
-    style.configure("TCheckbutton", background=C["card"], foreground=C["text"], font=("SF Pro Text", 12))
+    style.configure("TCheckbutton", background=C["card"], foreground=C["text"], font=("Helvetica Neue", 12))
     style.configure("TLabelframe", background=C["card"], foreground=C["text"], bordercolor=C["border"])
-    style.configure("TLabelframe.Label", background=C["card"], foreground=C["muted"], font=("SF Pro Text", 11, "bold"))
+    style.configure("TLabelframe.Label", background=C["card"], foreground=C["muted"], font=("Menlo", 9))
     style.configure("TNotebook", background=C["bg"], borderwidth=0)
     style.configure("TNotebook.Tab", background=C["surface"], foreground=C["muted"], padding=(16, 8))
     style.map("TNotebook.Tab", background=[("selected", C["card"])], foreground=[("selected", C["text"])])
     style.configure("TCombobox", fieldbackground=C["card"], foreground=C["text"], background=C["card"])
     style.configure(
         "Treeview",
-        background=C["card"],
+        background=C["paper"],
         foreground=C["text"],
-        fieldbackground=C["card"],
-        rowheight=42,
+        fieldbackground=C["paper"],
+        rowheight=34,
         borderwidth=0,
-        font=("SF Pro Text", 11),
+        font=("Menlo", 10),
     )
     style.configure(
         "Treeview.Heading",
-        background=C["text"],
-        foreground="#ffffff",
+        background=C["ink"],
+        foreground=C["paper"],
         borderwidth=0,
-        padding=(10, 11),
-        font=("SF Pro Text", 10, "bold"),
+        padding=(8, 7),
+        font=("Menlo", 9),
     )
     style.map(
         "Treeview.Heading",
-        background=[("active", C["text"])],
-        foreground=[("active", "#ffffff")],
+        background=[("active", C["ink"])],
+        foreground=[("active", C["paper"])],
     )
     return style
 
 
 class CompletionRing(tk.Canvas):
-    """Small antialiased-looking progress ring for employee cards."""
+    """Compact progress ring — olive when complete, ink otherwise."""
 
-    def __init__(self, master: Any, percent: int, size: int = 48):
+    def __init__(self, master: Any, percent: int, size: int = 48, *, bg: Optional[str] = None):
+        canvas_bg = bg or C["card"]
         super().__init__(
             master,
             width=size,
             height=size,
-            bg=C["card"],
+            bg=canvas_bg,
             highlightthickness=0,
             borderwidth=0,
         )
-        inset = 5
+        inset = 4
         self.create_oval(
             inset,
             inset,
             size - inset,
             size - inset,
-            outline="#dedee3",
-            width=4,
+            outline=C["border"],
+            width=2,
         )
         if percent:
             self.create_arc(
@@ -189,51 +210,98 @@ class CompletionRing(tk.Canvas):
                 start=90,
                 extent=-(360 * min(percent, 100) / 100),
                 style=tk.ARC,
-                outline=C["text"],
-                width=4,
+                outline=C["accent"] if percent >= 80 else C["ink"],
+                width=2,
             )
         self.create_text(
             size / 2,
             size / 2,
             text=str(percent),
-            fill=C["text"],
-            font=("SF Pro Text", 9, "bold"),
+            fill=C["ink"],
+            font=("Menlo", 7, "bold"),
         )
 
 
 class BrandGlyph(tk.Canvas):
-    """Compact layered-vault mark drawn as crisp vector lines."""
+    """Minimal DL mark — no vault-door theater."""
 
-    def __init__(self, master: Any, size: int = 30):
+    def __init__(self, master: Any, size: int = 30, *, bg: Optional[str] = None, ink: Optional[str] = None):
+        canvas_bg = bg if bg is not None else C["card"]
+        stroke = ink if ink is not None else C["ink"]
         super().__init__(
             master,
             width=size,
             height=size,
-            bg=C["text"],
+            bg=canvas_bg,
             highlightthickness=0,
             borderwidth=0,
         )
-        center = size / 2
-        for offset in (-5, 0, 5):
-            y = center + offset
-            self.create_polygon(
-                center,
-                y - 5,
-                center + 10,
-                y,
-                center,
-                y + 5,
-                center - 10,
-                y,
-                outline="#ffffff",
-                fill="",
-                width=1.5,
-                joinstyle=tk.ROUND,
-            )
+        pad = 2
+        self.create_rectangle(
+            pad,
+            pad,
+            size - pad,
+            size - pad,
+            outline=stroke,
+            width=1,
+        )
+        self.create_text(
+            size / 2,
+            size / 2,
+            text="DL",
+            fill=stroke,
+            font=("Menlo", max(9, size // 3), "bold"),
+        )
+
+
+class InitialsMark(tk.Canvas):
+    """Quiet initials block for the people list."""
+
+    def __init__(
+        self,
+        master: Any,
+        initials: str,
+        *,
+        size: int = 36,
+        selected: bool = False,
+        bg: Optional[str] = None,
+    ):
+        canvas_bg = bg or C["card"]
+        super().__init__(
+            master,
+            width=size,
+            height=size,
+            bg=canvas_bg,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        pad = 1
+        fill = C["accent"] if selected else C["surface"]
+        outline = C["accent"] if selected else C["border"]
+        self.create_rectangle(
+            pad,
+            pad,
+            size - pad,
+            size - pad,
+            fill=fill,
+            outline=outline,
+            width=1,
+        )
+        self.create_text(
+            size / 2,
+            size / 2,
+            text=(initials or "—")[:2],
+            fill=C["paper"] if selected else C["ink"],
+            font=("Menlo", 11, "bold"),
+        )
+
+
+# Back-compat alias used by older call sites during restyle.
+KeyTag = InitialsMark
 
 
 def _auth_shell(dialog: ctk.CTkToplevel, *, height: int) -> ctk.CTkFrame:
-    """Shared unlock chrome: zinc desktop + white card with brand mark."""
+    """Unlock panel: blotter ground + flat paper tray."""
     dialog.resizable(False, False)
     dialog.configure(fg_color=C["bg"])
     dialog.update_idletasks()
@@ -248,11 +316,12 @@ def _auth_shell(dialog: ctk.CTkToplevel, *, height: int) -> ctk.CTkFrame:
     card = ctk.CTkFrame(
         shell,
         fg_color=C["card"],
-        corner_radius=22,
+        corner_radius=2,
         border_width=1,
         border_color=C["border"],
     )
-    card.pack(fill=tk.BOTH, expand=True, padx=22, pady=22)
+    card.pack(fill=tk.BOTH, expand=True, padx=18, pady=18)
+    ctk.CTkFrame(card, fg_color=C["ink"], height=2, corner_radius=0).pack(fill=tk.X)
     return card
 
 
@@ -293,30 +362,30 @@ def _auth_brand(parent: ctk.CTkFrame, title: str, subtitle: str) -> None:
     header.pack(fill=tk.X, padx=28, pady=(28, 18))
     mark = ctk.CTkFrame(
         header,
-        width=44,
-        height=44,
-        corner_radius=14,
-        fg_color=C["text"],
+        width=48,
+        height=48,
+        corner_radius=8,
+        fg_color=C["surface"],
     )
     mark.pack()
     mark.pack_propagate(False)
-    BrandGlyph(mark, size=30).pack(expand=True)
+    BrandGlyph(mark, size=40, bg=C["surface"], ink=C["accent"]).pack(expand=True)
     ctk.CTkLabel(
         header,
         text="DOWNLOWd",
-        font=("Avenir Next", 22, "bold"),
-        text_color=C["text"],
+        font=F_BRAND,
+        text_color=C["ink"],
     ).pack(pady=(14, 2))
     ctk.CTkLabel(
         header,
         text=title,
-        font=("Avenir Next", 15, "bold"),
+        font=F_TITLE,
         text_color=C["text"],
     ).pack()
     ctk.CTkLabel(
         header,
         text=subtitle,
-        font=("SF Pro Text", 12),
+        font=F_BODY,
         text_color=C["muted"],
         wraplength=300,
         justify="center",
@@ -327,7 +396,7 @@ def _auth_field_label(parent: ctk.CTkFrame, text: str) -> None:
     ctk.CTkLabel(
         parent,
         text=text.upper(),
-        font=("Avenir Next", 9, "bold"),
+        font=F_CAPTION,
         text_color=C["muted"],
         anchor="w",
     ).pack(fill=tk.X, pady=(0, 6))
@@ -343,15 +412,15 @@ def _auth_entry(
     entry = ctk.CTkEntry(
         parent,
         textvariable=textvariable,
-        height=44,
-        corner_radius=12,
+        height=42,
+        corner_radius=6,
         border_width=1,
         border_color=C["border"],
         fg_color=C["surface"],
         text_color=C["text"],
         placeholder_text=placeholder,
         placeholder_text_color=C["muted"],
-        font=("SF Pro Text", 13),
+        font=F_BODY,
         show=show,
     )
     entry.pack(fill=tk.X, pady=(0, 14))
@@ -363,13 +432,13 @@ def _auth_primary_button(parent: ctk.CTkFrame, text: str, command: Callable[[], 
         parent,
         text=text,
         command=command,
-        height=46,
-        corner_radius=14,
+        height=44,
+        corner_radius=2,
         border_width=0,
-        fg_color=C["text"],
-        hover_color="#323238",
-        text_color="#ffffff",
-        font=("SF Pro Text", 13, "bold"),
+        fg_color=C["accent"],
+        hover_color=C["accent_hover"],
+        text_color=C["paper"],
+        font=("Helvetica Neue", 12, "bold"),
         cursor="hand2",
     )
     button.pack(fill=tk.X, pady=(6, 0))
@@ -425,7 +494,7 @@ class AppPasswordDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             form,
             textvariable=status_var,
-            font=("SF Pro Text", 11),
+            font=("Helvetica Neue", 11),
             text_color=C["danger"],
             anchor="w",
         ).pack(fill=tk.X, pady=(0, 8))
@@ -527,7 +596,7 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             form,
             textvariable=status_var,
-            font=("SF Pro Text", 11),
+            font=("Helvetica Neue", 11),
             text_color=C["muted"],
             anchor="w",
         ).pack(fill=tk.X, pady=(0, 4))
@@ -581,7 +650,7 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             form,
             text="DOWNLOWd is a Bitwarden wrapper — secrets stay in your vault.",
-            font=("SF Pro Text", 11),
+            font=("Helvetica Neue", 11),
             text_color=C["muted"],
             wraplength=300,
             justify="center",
@@ -858,8 +927,14 @@ class Dashboard(ttk.Frame):
         self._revealed_profile_values: Set[Tuple[str, str]] = set()
         self._employee_modal: Optional[ctk.CTkToplevel] = None
         self._ledger_employee_map: Dict[str, str] = {}
+        self._assist_panel: Optional[ctk.CTkToplevel] = None
+        self._assist_event = threading.Event()
+        self._assist_decision = "skip"
+        self._assist_personal: Dict[str, str] = {}
+        self._assist_service = ""
 
         self._build()
+        self._bind_assist_hotkeys()
         self._configure_logging()
         self.after(100, self._poll_log_queue)
         self._refresh_queued_files()
@@ -869,79 +944,94 @@ class Dashboard(ttk.Frame):
         shell = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         shell.pack(fill=tk.BOTH, expand=True)
 
-        header = ctk.CTkFrame(shell, fg_color="transparent", height=56)
-        header.pack(fill=tk.X, padx=16, pady=(14, 8))
+        # Ops masthead — wordmark + status, minimal mark
+        header = ctk.CTkFrame(shell, fg_color=C["card"], height=52, corner_radius=0)
+        header.pack(fill=tk.X)
         header.pack_propagate(False)
+        mast = ctk.CTkFrame(header, fg_color="transparent")
+        mast.pack(fill=tk.BOTH, expand=True, padx=12, pady=(8, 0))
 
-        brand = ctk.CTkFrame(header, fg_color="transparent")
+        brand = ctk.CTkFrame(mast, fg_color="transparent")
         brand.pack(side=tk.LEFT)
-        mark = ctk.CTkFrame(brand, width=34, height=34, corner_radius=11, fg_color=C["text"])
+        mark = ctk.CTkFrame(brand, width=28, height=28, corner_radius=2, fg_color=C["surface"])
         mark.pack(side=tk.LEFT)
         mark.pack_propagate(False)
-        BrandGlyph(mark, size=24).pack(expand=True)
+        BrandGlyph(mark, size=26, bg=C["surface"], ink=C["ink"]).pack(expand=True)
+        title_col = ctk.CTkFrame(brand, fg_color="transparent")
+        title_col.pack(side=tk.LEFT, padx=(8, 0))
         ctk.CTkLabel(
-            brand,
+            title_col,
             text="DOWNLOWd",
-            font=("Avenir Next", 16, "bold"),
-            text_color=C["text"],
-        ).pack(side=tk.LEFT, padx=(10, 0))
+            font=F_BRAND,
+            text_color=C["ink"],
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_col,
+            text="ops",
+            font=F_CAPTION,
+            text_color=C["muted"],
+        ).pack(anchor="w")
 
-        actions = ctk.CTkFrame(header, fg_color="transparent")
+        actions = ctk.CTkFrame(mast, fg_color="transparent")
         actions.pack(side=tk.RIGHT)
         ctk.CTkButton(
             actions,
             text="Sync",
             command=self._sync_profiles,
-            width=64,
-            height=32,
-            corner_radius=10,
-            fg_color=C["card_hi"],
-            hover_color="#dedee2",
-            text_color=C["text"],
-            font=("Avenir Next", 11, "bold"),
+            width=58,
+            height=28,
+            corner_radius=2,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            text_color=C["paper"],
+            font=("Helvetica Neue", 11, "bold"),
         ).pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkButton(
             actions,
-            text="⚙",
+            text="···",
             command=self._open_settings_modal,
-            width=32,
-            height=32,
-            corner_radius=10,
-            fg_color=C["card_hi"],
-            hover_color="#dedee2",
-            text_color=C["text"],
-            font=("Avenir Next", 14),
+            width=28,
+            height=28,
+            corner_radius=2,
+            fg_color=C["surface"],
+            hover_color=C["border"],
+            text_color=C["ink"],
+            font=("Menlo", 12, "bold"),
         ).pack(side=tk.LEFT)
 
+        ctk.CTkFrame(header, fg_color=C["ink"], height=1, corner_radius=0).pack(
+            fill=tk.X, side=tk.BOTTOM
+        )
+
         body = ctk.CTkFrame(shell, fg_color="transparent")
-        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
-        body.grid_columnconfigure(0, weight=1)
-        body.grid_columnconfigure(1, weight=1)
+        body.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 6))
+        body.grid_columnconfigure(0, weight=5)
+        body.grid_columnconfigure(1, weight=4)
         body.grid_rowconfigure(0, weight=1)
 
-        # --- Employees (contact list) ---
+        # Roster tray
         people = ctk.CTkFrame(
             body,
             fg_color=C["card"],
-            corner_radius=18,
+            corner_radius=2,
             border_width=1,
             border_color=C["border"],
         )
-        people.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        people.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         head = ctk.CTkFrame(people, fg_color="transparent")
-        head.pack(fill=tk.X, padx=14, pady=(12, 6))
+        head.pack(fill=tk.X, padx=12, pady=(10, 4))
         ctk.CTkLabel(
             head,
             text="People",
-            font=("Avenir Next", 13, "bold"),
-            text_color=C["text"],
+            font=F_CAPTION,
+            text_color=C["muted"],
         ).pack(side=tk.LEFT)
         self.employee_count = tk.StringVar(value="0")
         ctk.CTkLabel(
             head,
             textvariable=self.employee_count,
-            font=("Avenir Next", 11),
-            text_color=C["muted"],
+            font=("Menlo", 10, "bold"),
+            text_color=C["accent"],
         ).pack(side=tk.RIGHT)
 
         self.employee_scroll = ctk.CTkScrollableFrame(
@@ -949,58 +1039,57 @@ class Dashboard(ttk.Frame):
             fg_color="transparent",
             corner_radius=0,
         )
-        self.employee_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 10))
+        self.employee_scroll.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 8))
         self.employee_grid = self.employee_scroll
 
-        # --- Ledger widget ---
+        # Spend tray
         ledger = ctk.CTkFrame(
             body,
             fg_color=C["card"],
-            corner_radius=18,
+            corner_radius=2,
             border_width=1,
             border_color=C["border"],
         )
-        ledger.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        ledger.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
         lhead = ctk.CTkFrame(ledger, fg_color="transparent")
-        lhead.pack(fill=tk.X, padx=14, pady=(12, 6))
+        lhead.pack(fill=tk.X, padx=12, pady=(10, 4))
         ctk.CTkLabel(
             lhead,
-            text="Ledger",
-            font=("Avenir Next", 13, "bold"),
-            text_color=C["text"],
+            text="Spend",
+            font=F_CAPTION,
+            text_color=C["muted"],
         ).pack(side=tk.LEFT)
         ctk.CTkButton(
             lhead,
             text="+",
             command=self._add_transaction_dialog,
-            width=28,
-            height=28,
-            corner_radius=9,
-            fg_color=C["text"],
-            hover_color="#323238",
-            text_color="#ffffff",
-            font=("Avenir Next", 14, "bold"),
+            width=26,
+            height=26,
+            corner_radius=4,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            text_color=C["paper"],
+            font=("Helvetica Neue", 14, "bold"),
         ).pack(side=tk.RIGHT)
 
         self.budget_overview = ctk.CTkFrame(ledger, fg_color="transparent")
-        self.budget_overview.pack(fill=tk.X, padx=10, pady=(0, 6))
+        self.budget_overview.pack(fill=tk.X, padx=8, pady=(0, 4))
 
         self.ledger_filter = tk.StringVar(value="All")
         self._ledger_filter_ids: Dict[str, Optional[str]] = {"All": None}
         self.ledger_chips = ctk.CTkFrame(ledger, fg_color="transparent")
-        self.ledger_chips.pack(fill=tk.X, padx=10, pady=(0, 6))
+        self.ledger_chips.pack(fill=tk.X, padx=8, pady=(0, 4))
 
-        list_frame = ctk.CTkFrame(ledger, fg_color=C["surface"], corner_radius=12)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        list_frame = ctk.CTkFrame(ledger, fg_color=C["surface"], corner_radius=4)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
         cols = ("date", "merchant", "amount")
         self.trans_tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=8)
-        for c, t, w in (("date", "Date", 72), ("merchant", "Merchant", 110), ("amount", "$", 54)):
+        for c, t, w in (("date", "Date", 68), ("merchant", "Where", 100), ("amount", "$", 48)):
             self.trans_tree.heading(c, text=t)
             self.trans_tree.column(c, width=w, anchor="w" if c != "amount" else "e")
-        self.trans_tree.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self.trans_tree.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         self.trans_tree.bind("<Delete>", lambda _e: self._delete_selected_transaction())
 
-        # Hidden vars used by legacy helpers / settings persistence
         self.profile_title = tk.StringVar(value="")
         self.profile_subtitle = tk.StringVar(value="")
         self.profile_search = tk.StringVar(value="")
@@ -1011,16 +1100,16 @@ class Dashboard(ttk.Frame):
         self.record_buttons: Dict[str, ctk.CTkButton] = {}
         self.nav_buttons: Dict[str, ctk.CTkButton] = {}
 
-        footer = ctk.CTkFrame(shell, fg_color="transparent", height=28)
-        footer.pack(fill=tk.X, padx=16, pady=(0, 10))
+        footer = ctk.CTkFrame(shell, fg_color=C["ink"], height=26, corner_radius=0)
+        footer.pack(fill=tk.X, side=tk.BOTTOM)
         footer.pack_propagate(False)
         ctk.CTkLabel(
             footer,
             textvariable=self.status,
-            font=("Avenir Next", 10),
-            text_color=C["muted"],
+            font=("Menlo", 9),
+            text_color=C["status"],
             anchor="w",
-        ).pack(fill=tk.X)
+        ).pack(fill=tk.X, padx=12, pady=4)
 
         self._refresh_employee_list()
         self._refresh_transaction_list()
@@ -1044,7 +1133,7 @@ class Dashboard(ttk.Frame):
         card = ctk.CTkFrame(
             dialog,
             fg_color=C["card"],
-            corner_radius=18,
+            corner_radius=2,
             border_width=1,
             border_color=C["border"],
         )
@@ -1052,7 +1141,7 @@ class Dashboard(ttk.Frame):
         ctk.CTkLabel(
             card,
             text="Settings",
-            font=("Avenir Next", 16, "bold"),
+            font=("Helvetica Neue", 16, "bold"),
             text_color=C["text"],
         ).pack(anchor="w", padx=18, pady=(16, 10))
 
@@ -1063,7 +1152,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 form,
                 text=label.upper(),
-                font=("Avenir Next", 9, "bold"),
+                font=("Helvetica Neue", 9, "bold"),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X, pady=(8, 4))
@@ -1076,7 +1165,7 @@ class Dashboard(ttk.Frame):
                 border_color=C["border"],
                 fg_color=C["surface"],
                 show=show,
-                font=("SF Pro Text", 12),
+                font=("Helvetica Neue", 12),
             ).pack(fill=tk.X)
 
         labeled_entry("Shared passphrase", self.shared_passphrase, show="•")
@@ -1091,7 +1180,7 @@ class Dashboard(ttk.Frame):
         ):
             row = ctk.CTkFrame(form, fg_color="transparent")
             row.pack(fill=tk.X, pady=4)
-            ctk.CTkLabel(row, text=label, font=("Avenir Next", 12), text_color=C["text"]).pack(
+            ctk.CTkLabel(row, text=label, font=("Helvetica Neue", 12), text_color=C["text"]).pack(
                 side=tk.LEFT
             )
             ctk.CTkSwitch(
@@ -1100,13 +1189,26 @@ class Dashboard(ttk.Frame):
                 variable=var,
                 width=42,
                 fg_color=C["border"],
-                progress_color=C["text"],
+                progress_color=C["accent"],
             ).pack(side=tk.RIGHT)
 
         ctk.CTkLabel(
             form,
+            text=(
+                "Assisted signup — we open + fill what we can; "
+                "CAPTCHA/submit stay with you."
+            ),
+            font=F_CAPTION,
+            text_color=C["muted"],
+            wraplength=300,
+            justify="left",
+            anchor="w",
+        ).pack(fill=tk.X, pady=(8, 2))
+
+        ctk.CTkLabel(
+            form,
             text="LOCAL DELETE",
-            font=("Avenir Next", 9, "bold"),
+            font=("Helvetica Neue", 9, "bold"),
             text_color=C["muted"],
             anchor="w",
         ).pack(fill=tk.X, pady=(10, 4))
@@ -1121,12 +1223,12 @@ class Dashboard(ttk.Frame):
             button_hover_color="#dedee2",
             text_color=C["text"],
             dropdown_fg_color=C["card"],
-            font=("Avenir Next", 11),
+            font=("Helvetica Neue", 11),
         ).pack(fill=tk.X)
         ctk.CTkLabel(
             form,
             text="VAULT CLEANUP",
-            font=("Avenir Next", 9, "bold"),
+            font=("Helvetica Neue", 9, "bold"),
             text_color=C["muted"],
             anchor="w",
         ).pack(fill=tk.X, pady=(10, 4))
@@ -1141,7 +1243,7 @@ class Dashboard(ttk.Frame):
             button_hover_color="#dedee2",
             text_color=C["text"],
             dropdown_fg_color=C["card"],
-            font=("Avenir Next", 11),
+            font=("Helvetica Neue", 11),
         ).pack(fill=tk.X)
 
         def save():
@@ -1154,10 +1256,10 @@ class Dashboard(ttk.Frame):
             command=save,
             height=40,
             corner_radius=12,
-            fg_color=C["text"],
-            hover_color="#323238",
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
             text_color="#ffffff",
-            font=("Avenir Next", 12, "bold"),
+            font=("Helvetica Neue", 12, "bold"),
         ).pack(fill=tk.X, padx=18, pady=(4, 16))
 
     def _open_employee_modal(self, employee_id: str):
@@ -1192,7 +1294,7 @@ class Dashboard(ttk.Frame):
         card = ctk.CTkFrame(
             dialog,
             fg_color=C["card"],
-            corner_radius=18,
+            corner_radius=2,
             border_width=1,
             border_color=C["border"],
         )
@@ -1203,7 +1305,7 @@ class Dashboard(ttk.Frame):
         ctk.CTkLabel(
             top,
             text=profile.get("display_name", "Employee"),
-            font=("Avenir Next", 18, "bold"),
+            font=("Helvetica Neue", 18, "bold"),
             text_color=C["text"],
         ).pack(side=tk.LEFT)
         ctk.CTkButton(
@@ -1222,7 +1324,7 @@ class Dashboard(ttk.Frame):
         ctk.CTkLabel(
             card,
             textvariable=self.profile_subtitle,
-            font=("Avenir Next", 11),
+            font=("Helvetica Neue", 11),
             text_color=C["muted"],
             anchor="w",
         ).pack(fill=tk.X, padx=16)
@@ -1248,7 +1350,7 @@ class Dashboard(ttk.Frame):
                 fg_color="transparent",
                 hover_color="#e7e7ea",
                 text_color=C["muted"],
-                font=("Avenir Next", 10, "bold"),
+                font=("Helvetica Neue", 10, "bold"),
             )
             btn.pack(side=tk.LEFT, padx=3, pady=4)
             self.record_buttons[role] = btn
@@ -1269,10 +1371,10 @@ class Dashboard(ttk.Frame):
             width=72,
             height=34,
             corner_radius=10,
-            fg_color=C["text"],
-            hover_color="#323238",
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
             text_color="#ffffff",
-            font=("Avenir Next", 11, "bold"),
+            font=("Helvetica Neue", 11, "bold"),
         )
         self.profile_edit_button.pack(side=tk.LEFT)
         ctk.CTkButton(
@@ -1285,7 +1387,7 @@ class Dashboard(ttk.Frame):
             fg_color=C["card_hi"],
             hover_color="#dedee2",
             text_color=C["text"],
-            font=("Avenir Next", 11, "bold"),
+            font=("Helvetica Neue", 11, "bold"),
         ).pack(side=tk.LEFT, padx=6)
         ctk.CTkButton(
             actions,
@@ -1297,7 +1399,7 @@ class Dashboard(ttk.Frame):
             fg_color=C["card_hi"],
             hover_color="#dedee2",
             text_color=C["text"],
-            font=("Avenir Next", 11, "bold"),
+            font=("Helvetica Neue", 11, "bold"),
         ).pack(side=tk.LEFT)
         self.profile_restore_button = ctk.CTkButton(
             actions,
@@ -1309,7 +1411,7 @@ class Dashboard(ttk.Frame):
             fg_color=C["card_hi"],
             hover_color="#dedee2",
             text_color=C["text"],
-            font=("Avenir Next", 11, "bold"),
+            font=("Helvetica Neue", 11, "bold"),
         )
         self.profile_restore_button.pack(side=tk.RIGHT, padx=(6, 0))
         self.profile_delete_button = ctk.CTkButton(
@@ -1322,7 +1424,7 @@ class Dashboard(ttk.Frame):
             fg_color="transparent",
             hover_color="#fee2e2",
             text_color=C["danger"],
-            font=("Avenir Next", 11, "bold"),
+            font=("Helvetica Neue", 11, "bold"),
         )
         self.profile_delete_button.pack(side=tk.RIGHT)
 
@@ -1421,7 +1523,7 @@ class Dashboard(ttk.Frame):
             exists = key in self.profile_bundle
             try:
                 button.configure(
-                    fg_color=C["text"] if key == role else "transparent",
+                    fg_color=C["accent"] if key == role else "transparent",
                     text_color="#ffffff" if key == role else (C["text"] if exists else C["muted"]),
                 )
             except tk.TclError:
@@ -1500,7 +1602,7 @@ class Dashboard(ttk.Frame):
                 self.profile_viewer,
                 text=message,
                 text_color=C["muted"],
-                font=("Avenir Next", 11),
+                font=("Helvetica Neue", 11),
                 wraplength=440,
                 justify="left",
             ).pack(anchor="w", padx=14, pady=14)
@@ -1512,13 +1614,13 @@ class Dashboard(ttk.Frame):
                 self.profile_viewer,
                 text="Not created yet",
                 text_color=C["muted"],
-                font=("Avenir Next", 12, "bold"),
+                font=("Helvetica Neue", 12, "bold"),
             ).pack(anchor="w", padx=14, pady=(14, 4))
             ctk.CTkLabel(
                 self.profile_viewer,
                 text="Use Resume to provision this account, or wait for HQ auto-import.",
                 text_color=C["muted"],
-                font=("Avenir Next", 11),
+                font=("Helvetica Neue", 11),
                 wraplength=420,
                 justify="left",
             ).pack(anchor="w", padx=14)
@@ -1528,13 +1630,13 @@ class Dashboard(ttk.Frame):
                 self.profile_viewer,
                 text="Record unavailable",
                 text_color=C["text"],
-                font=("Avenir Next", 12, "bold"),
+                font=("Helvetica Neue", 12, "bold"),
             ).pack(anchor="w", padx=14, pady=(14, 6))
             ctk.CTkLabel(
                 self.profile_viewer,
                 text="Could not load this Bitwarden item. Sync and try again.",
                 text_color=C["muted"],
-                font=("Avenir Next", 11),
+                font=("Helvetica Neue", 11),
                 wraplength=420,
                 justify="left",
             ).pack(anchor="w", padx=14)
@@ -1544,7 +1646,7 @@ class Dashboard(ttk.Frame):
             self.profile_viewer,
             text=str(item.get("name") or role),
             text_color=C["text"],
-            font=("Avenir Next", 12, "bold"),
+            font=("Helvetica Neue", 12, "bold"),
         ).pack(anchor="w", padx=14, pady=(12, 8))
 
         if role == "identity":
@@ -1581,7 +1683,7 @@ class Dashboard(ttk.Frame):
                 self.profile_viewer,
                 text="No fields stored on this item yet.",
                 text_color=C["muted"],
-                font=("Avenir Next", 11),
+                font=("Helvetica Neue", 11),
             ).pack(anchor="w", padx=14, pady=8)
             return
 
@@ -1598,7 +1700,7 @@ class Dashboard(ttk.Frame):
                 anchor="w",
                 width=100,
                 text_color=C["muted"],
-                font=("Avenir Next", 10, "bold"),
+                font=("Helvetica Neue", 10, "bold"),
             ).pack(side=tk.LEFT, padx=(10, 6), pady=8)
             reveal_key = (role, label)
             shown = value
@@ -1622,7 +1724,7 @@ class Dashboard(ttk.Frame):
                     fg_color=C["card"],
                     hover_color="#e4e4e7",
                     text_color=C["text"],
-                    font=("Avenir Next", 9, "bold"),
+                    font=("Helvetica Neue", 9, "bold"),
                 ).pack(side=tk.RIGHT, padx=8, pady=6)
 
     def _toggle_profile_reveal(self, key: Tuple[str, str]):
@@ -1692,7 +1794,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 form,
                 text=label.upper(),
-                font=("Avenir Next", 9, "bold"),
+                font=("Helvetica Neue", 9, "bold"),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X, pady=(8, 3))
@@ -1721,10 +1823,10 @@ class Dashboard(ttk.Frame):
             command=save,
             height=38,
             corner_radius=11,
-            fg_color=C["text"],
-            hover_color="#323238",
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
             text_color="#ffffff",
-            font=("Avenir Next", 12, "bold"),
+            font=("Helvetica Neue", 12, "bold"),
         ).pack(fill=tk.X, pady=(16, 8))
 
     def _save_identity_updates(
@@ -1887,17 +1989,18 @@ class Dashboard(ttk.Frame):
                 self._refresh_transaction_list()
                 self._build_ledger_chips(names)
 
+            active = self.ledger_filter.get() == name
             ctk.CTkButton(
                 self.ledger_chips,
                 text=name if name == "All" else (name.split()[0] if name.split() else name),
                 command=select,
-                width=52,
-                height=26,
-                corner_radius=8,
-                fg_color=C["text"] if self.ledger_filter.get() == name else C["card_hi"],
-                hover_color="#323238" if self.ledger_filter.get() == name else "#dedee2",
-                text_color="#ffffff" if self.ledger_filter.get() == name else C["text"],
-                font=("Avenir Next", 9, "bold"),
+                width=48,
+                height=24,
+                corner_radius=4,
+                fg_color=C["accent"] if active else C["surface"],
+                hover_color=C["accent_hover"] if active else C["card_hi"],
+                text_color=C["paper"] if active else C["ink"],
+                font=F_CAPTION,
             ).pack(side=tk.LEFT, padx=2)
 
     def _queued_employee_files(self) -> List[Path]:
@@ -1965,39 +2068,296 @@ class Dashboard(ttk.Frame):
                 self.log_msg(f"Monitor error: {e!r}")
                 time.sleep(10)
 
+    def _bind_assist_hotkeys(self) -> None:
+        root = self.app.root
+        for index, key in enumerate(ASSIST_FIELD_KEYS, start=1):
+            root.bind_all(
+                f"<Command-Key-{index}>",
+                lambda _e, field=key: self._assist_paste_field(field),
+            )
+            root.bind_all(
+                f"<Control-Key-{index}>",
+                lambda _e, field=key: self._assist_paste_field(field),
+            )
+
+    def _assist_paste_field(self, field_key: str) -> str:
+        if not self._assist_personal:
+            return "break"
+        value = assist_field_value(self._assist_personal, field_key)
+        if not value:
+            self.status.set(f"No value for {ASSIST_FIELD_LABELS.get(field_key, field_key)}")
+            return "break"
+        # Briefly yield so the browser can keep focus after the hotkey.
+        self.after(40, lambda v=value, k=field_key: self._do_assist_paste(v, k))
+        return "break"
+
+    def _do_assist_paste(self, value: str, field_key: str) -> None:
+        ok = paste_field_value(value)
+        label = ASSIST_FIELD_LABELS.get(field_key, field_key)
+        self.status.set(f"Pasted {label}" if ok else f"Copied {label} (paste manually)")
+
+    def _assist_copy_field(self, field_key: str) -> None:
+        value = assist_field_value(self._assist_personal, field_key)
+        if not value:
+            return
+        copy_to_clipboard(value)
+        self.status.set(f"Copied {ASSIST_FIELD_LABELS.get(field_key, field_key)}")
+
+    def _assist_copy_payload(self) -> None:
+        payload = format_assist_payload(
+            self._assist_personal,
+            self._assist_personal.get("username")
+            or self._assist_personal.get("email")
+            or "",
+            service=self._assist_service,
+        )
+        copy_to_clipboard(payload)
+        self.status.set("Copied assist payload")
+
+    def _close_assist_panel(self, decision: str) -> None:
+        self._assist_decision = decision
+        panel = self._assist_panel
+        self._assist_panel = None
+        if panel is not None:
+            try:
+                panel.destroy()
+            except tk.TclError:
+                pass
+        self._assist_event.set()
+
+    def _show_assist_panel(
+        self,
+        service: str,
+        employee: Dict[str, str],
+        result: Dict[str, Any],
+    ) -> None:
+        if self._assist_panel is not None:
+            try:
+                self._assist_panel.destroy()
+            except tk.TclError:
+                pass
+
+        personal = dict(result.get("personal_data") or {})
+        if not personal:
+            personal = {
+                "full_name": employee.get("full_name", ""),
+                "first_name": employee.get("first_name", ""),
+                "last_name": employee.get("last_name", ""),
+                "email": employee.get("email", ""),
+                "username": employee.get("username", ""),
+                "password": "",
+            }
+        self._assist_personal = personal
+        self._assist_service = service
+        self._assist_decision = "skip"
+        self._assist_event.clear()
+
+        panel = ctk.CTkToplevel(self.app.root)
+        self._assist_panel = panel
+        panel.title(f"Assist · {service}")
+        panel.configure(fg_color=C["bg"])
+        panel.resizable(False, False)
+        panel.geometry("360x520+40+80")
+        try:
+            panel.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        panel.protocol("WM_DELETE_WINDOW", lambda: self._close_assist_panel("skip"))
+
+        card = ctk.CTkFrame(
+            panel,
+            fg_color=C["card"],
+            corner_radius=2,
+            border_width=1,
+            border_color=C["border"],
+        )
+        card.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        status = str(result.get("status") or "manual_only")
+        status_label = {
+            "prefilled": "prefilled — finish captcha/submit",
+            "bot_blocked": "bot blocked → system browser",
+            "manual_only": "manual — use field buttons / ⌘1–6",
+            "manual_completion_required": "manual — use field buttons / ⌘1–6",
+            "error": "error — try Retry or complete manually",
+        }.get(status, status)
+
+        ctk.CTkLabel(
+            card,
+            text=f"{service} assist",
+            font=F_TITLE,
+            text_color=C["ink"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=14, pady=(14, 2))
+        ctk.CTkLabel(
+            card,
+            text=employee.get("full_name") or "Employee",
+            font=("Menlo", 11),
+            text_color=C["text"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=14)
+        ctk.CTkLabel(
+            card,
+            text=status_label,
+            font=F_CAPTION,
+            text_color=C["accent"],
+            anchor="w",
+            wraplength=300,
+            justify="left",
+        ).pack(fill=tk.X, padx=14, pady=(4, 2))
+        filled = result.get("filled_fields") or []
+        ctk.CTkLabel(
+            card,
+            text=f"Filled: {', '.join(filled) if filled else 'none'}",
+            font=F_CAPTION,
+            text_color=C["muted"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=14, pady=(0, 6))
+        url = result.get("url") or ""
+        if url:
+            ctk.CTkLabel(
+                card,
+                text=url,
+                font=("Menlo", 8),
+                text_color=C["muted"],
+                anchor="w",
+                wraplength=300,
+                justify="left",
+            ).pack(fill=tk.X, padx=14, pady=(0, 8))
+
+        fields = ctk.CTkFrame(card, fg_color="transparent")
+        fields.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+        for index, key in enumerate(ASSIST_FIELD_KEYS, start=1):
+            value = assist_field_value(personal, key)
+            if key == "email" and service == "Outlook" and not value:
+                value = assist_field_value(personal, "username")
+            row = ctk.CTkFrame(fields, fg_color=C["surface"], corner_radius=2)
+            row.pack(fill=tk.X, pady=2)
+            label = ASSIST_FIELD_LABELS.get(key, key)
+            ctk.CTkLabel(
+                row,
+                text=f"⌘{index} {label}",
+                font=("Menlo", 10),
+                text_color=C["ink"],
+                width=110,
+                anchor="w",
+            ).pack(side=tk.LEFT, padx=8, pady=6)
+            preview = "••••••" if "password" in key and value else (value or "—")
+            if len(preview) > 22:
+                preview = preview[:21] + "…"
+            ctk.CTkLabel(
+                row,
+                text=preview,
+                font=("Menlo", 10),
+                text_color=C["muted"],
+                anchor="w",
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ctk.CTkButton(
+                row,
+                text="Copy",
+                width=48,
+                height=24,
+                corner_radius=2,
+                fg_color=C["card"],
+                hover_color=C["card_hi"],
+                text_color=C["ink"],
+                font=("Menlo", 9),
+                command=lambda k=key: self._assist_copy_field(k),
+            ).pack(side=tk.RIGHT, padx=4, pady=4)
+            ctk.CTkButton(
+                row,
+                text="Paste",
+                width=52,
+                height=24,
+                corner_radius=2,
+                fg_color=C["accent"],
+                hover_color=C["accent_hover"],
+                text_color=C["paper"],
+                font=("Menlo", 9),
+                command=lambda k=key: self._assist_paste_field(k),
+            ).pack(side=tk.RIGHT, padx=(0, 4), pady=4)
+
+        note = (
+            "Skip Outlook keeps Hyatt/Marriott pending."
+            if service == "Outlook"
+            else "Done only after the account exists."
+        )
+        ctk.CTkLabel(
+            card,
+            text=f"Click the signup field, then Paste / ⌘1–6. {note}",
+            font=F_CAPTION,
+            text_color=C["muted"],
+            wraplength=310,
+            justify="left",
+            anchor="w",
+        ).pack(fill=tk.X, padx=14, pady=(0, 8))
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill=tk.X, padx=12, pady=(0, 12))
+        ctk.CTkButton(
+            actions,
+            text="Done",
+            width=90,
+            height=32,
+            corner_radius=2,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            text_color=C["paper"],
+            font=("Helvetica Neue", 12, "bold"),
+            command=lambda: self._close_assist_panel("done"),
+        ).pack(side=tk.LEFT)
+        ctk.CTkButton(
+            actions,
+            text="Skip",
+            width=70,
+            height=32,
+            corner_radius=2,
+            fg_color=C["surface"],
+            hover_color=C["card_hi"],
+            text_color=C["ink"],
+            font=("Helvetica Neue", 12),
+            command=lambda: self._close_assist_panel("skip"),
+        ).pack(side=tk.LEFT, padx=6)
+        ctk.CTkButton(
+            actions,
+            text="Retry",
+            width=70,
+            height=32,
+            corner_radius=2,
+            fg_color=C["surface"],
+            hover_color=C["card_hi"],
+            text_color=C["ink"],
+            font=("Helvetica Neue", 12),
+            command=lambda: self._close_assist_panel("retry"),
+        ).pack(side=tk.LEFT)
+        ctk.CTkButton(
+            actions,
+            text="Payload",
+            width=70,
+            height=32,
+            corner_radius=2,
+            fg_color=C["ink"],
+            hover_color="#2a2a2a",
+            text_color=C["paper"],
+            font=("Menlo", 10),
+            command=self._assist_copy_payload,
+        ).pack(side=tk.RIGHT)
+
     def _confirm_account_stage(
         self,
         service: str,
         employee: Dict[str, str],
         result: Dict[str, Any],
-    ) -> bool:
-        completed = threading.Event()
-        response = {"confirmed": False}
-
-        def ask_for_confirmation():
-            filled = result.get("filled_fields") or []
-            filled_text = ", ".join(filled) if filled else "none (complete manually)"
-            email = employee.get("email") or employee.get("username") or "unknown"
-            note = (
-                "\n\nSelecting No for Outlook keeps hotel accounts pending."
-                if service == "Outlook"
-                else ""
-            )
-            response["confirmed"] = messagebox.askyesno(
-                f"{service} checkpoint",
-                f"Finish creating the {service} account in managed Chrome.\n\n"
-                f"Employee: {employee.get('full_name', 'Unknown')}\n"
-                f"Email: {email}\n"
-                f"Autofilled fields: {filled_text}\n\n"
-                "Select Yes only after the account has been created."
-                f"{note}",
-                parent=self,
-            )
-            completed.set()
-
-        self.app.root.after(0, ask_for_confirmation)
-        completed.wait()
-        return response["confirmed"]
+    ) -> str:
+        """Non-modal assist panel; returns done | skip | retry."""
+        self._assist_event.clear()
+        self.app.root.after(
+            0,
+            lambda: self._show_assist_panel(service, employee, result),
+        )
+        self._assist_event.wait()
+        self._assist_personal = {}
+        return self._assist_decision
 
     def resume_selected_employee(self):
         if self._pipeline_running:
@@ -2207,12 +2567,17 @@ class Dashboard(ttk.Frame):
         logging.getLogger().addHandler(handler)
 
     def _poll_log_queue(self):
+        # QueueHandler already logged these once — only mirror into the status bar.
         while True:
             try:
                 msg = self.log_queue.get_nowait()
             except queue.Empty:
                 break
-            self.log_msg(msg)
+            short = msg if len(msg) < 72 else msg[:69] + "…"
+            try:
+                self.status.set(short)
+            except tk.TclError:
+                pass
         self.after(120, self._poll_log_queue)
 
     def log_msg(self, msg: str):
@@ -2246,8 +2611,8 @@ class Dashboard(ttk.Frame):
         if not profiles:
             ctk.CTkLabel(
                 self.employee_grid,
-                text="Waiting for HQ-*.txt in Downloads",
-                font=("Avenir Next", 11),
+                text="No employees yet — drop an HQ file to start",
+                font=F_BODY,
                 text_color=C["muted"],
                 wraplength=180,
                 justify="left",
@@ -2262,53 +2627,52 @@ class Dashboard(ttk.Frame):
             status = str(deletion.get("status") or profile.get("status") or "active").title()
             initials = "".join(part[0] for part in name.split() if part)[:2].upper()
             selected = employee_id == self.selected_profile_id
+            row_bg = C["accent_dim"] if selected else "transparent"
             row = ctk.CTkFrame(
                 self.employee_grid,
-                fg_color=C["card_hi"] if selected else "transparent",
-                corner_radius=12,
+                fg_color=row_bg,
+                corner_radius=4,
                 cursor="hand2",
             )
             row.pack(fill=tk.X, pady=2)
-            avatar = ctk.CTkFrame(
+            tag = InitialsMark(
                 row,
-                width=34,
-                height=34,
-                corner_radius=17,
-                fg_color=C["text"],
+                initials,
+                size=36,
+                selected=selected,
+                bg=C["accent_dim"] if selected else C["card"],
             )
-            avatar.pack(side=tk.LEFT, padx=(8, 8), pady=8)
-            avatar.pack_propagate(False)
-            ctk.CTkLabel(
-                avatar,
-                text=initials or "—",
-                text_color="#ffffff",
-                font=("Avenir Next", 10, "bold"),
-            ).pack(expand=True)
+            tag.pack(side=tk.LEFT, padx=(6, 8), pady=6)
             copy = ctk.CTkFrame(row, fg_color="transparent")
             copy.pack(side=tk.LEFT, fill=tk.X, expand=True)
             ctk.CTkLabel(
                 copy,
                 text=name,
-                font=("Avenir Next", 12, "bold"),
-                text_color=C["text"],
+                font=("Helvetica Neue", 13, "bold"),
+                text_color=C["ink"],
                 anchor="w",
             ).pack(fill=tk.X)
-            meta = profile.get("email") or f"{completed}/5 records · {status}"
+            meta = profile.get("email") or f"{completed}/5 · {status}"
             ctk.CTkLabel(
                 copy,
                 text=meta,
-                font=("Avenir Next", 9),
+                font=("Menlo", 9),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X)
-            CompletionRing(row, completed * 20, size=34).pack(side=tk.RIGHT, padx=8)
+            CompletionRing(
+                row,
+                completed * 20,
+                size=32,
+                bg=C["accent_dim"] if selected else C["card"],
+            ).pack(side=tk.RIGHT, padx=6)
 
             def open_profile(_event=None, eid=employee_id):
                 self._open_employee_modal(eid)
 
-            for widget in (row, avatar, copy):
+            for widget in (row, tag, copy):
                 widget.bind("<Button-1>", open_profile)
-            for child in list(copy.winfo_children()) + list(avatar.winfo_children()):
+            for child in list(copy.winfo_children()):
                 child.bind("<Button-1>", open_profile)
 
     def _select_employee(self, employee_name: str):
@@ -2371,7 +2735,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 form,
                 text=label.upper(),
-                font=("Avenir Next", 9, "bold"),
+                font=("Helvetica Neue", 9, "bold"),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X, padx=14, pady=(10, 3))
@@ -2387,7 +2751,7 @@ class Dashboard(ttk.Frame):
         ctk.CTkLabel(
             form,
             text="EMPLOYEE",
-            font=("Avenir Next", 9, "bold"),
+            font=("Helvetica Neue", 9, "bold"),
             text_color=C["muted"],
             anchor="w",
         ).pack(fill=tk.X, padx=14, pady=(10, 3))
@@ -2415,10 +2779,10 @@ class Dashboard(ttk.Frame):
             command=save,
             height=36,
             corner_radius=11,
-            fg_color=C["text"],
-            hover_color="#323238",
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
             text_color="#ffffff",
-            font=("Avenir Next", 12, "bold"),
+            font=("Helvetica Neue", 12, "bold"),
         ).pack(fill=tk.X, padx=14, pady=16)
 
     def _refresh_budget_overview(self, selected_name: str = "All employees"):
@@ -2443,7 +2807,7 @@ class Dashboard(ttk.Frame):
                 self.budget_overview,
                 text="Spend limits appear after import",
                 text_color=C["muted"],
-                font=("Avenir Next", 10),
+                font=("Helvetica Neue", 10),
             ).pack(anchor="w", padx=4, pady=4)
             return
         for profile in visible:
@@ -2456,14 +2820,14 @@ class Dashboard(ttk.Frame):
                 text=name,
                 width=56,
                 anchor="w",
-                font=("Avenir Next", 10, "bold"),
+                font=("Helvetica Neue", 10, "bold"),
                 text_color=C["text"],
             ).pack(side=tk.LEFT)
             if budget is None:
                 ctk.CTkLabel(
                     row,
                     text="no limit",
-                    font=("Avenir Next", 9),
+                    font=("Helvetica Neue", 9),
                     text_color=C["muted"],
                 ).pack(side=tk.LEFT)
                 continue
@@ -2482,7 +2846,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 row,
                 text=f"${spent:.0f}/${limit:.0f}",
-                font=("Avenir Next", 9),
+                font=("Helvetica Neue", 9),
                 text_color=C["muted"],
             ).pack(side=tk.RIGHT)
 
