@@ -13,18 +13,14 @@ Security controls for application and Bitwarden authentication, local settings, 
 - After a successful migration the source file is **securely overwritten and deleted** (no `.json.backup` left behind)
 - If migration fails mid-way, the original file is left intact and an error is logged
 
-### 2. Application Authentication (PBKDF2 + Bitwarden)
+### 2. Bitwarden Authentication
 
-- First launch requires creating a separate app password (minimum 8 characters)
-- The app password is stored as a PBKDF2-HMAC-SHA256 hash (200,000 iterations) with a random salt in Keychain
-- Correct password verification creates a random Keychain session token with a one-hour timeout
-- The main window opens only after app-password verification and a successful `bw login` or `bw unlock`
+- The main window opens only after a successful `bw login` or `bw unlock` with the Bitwarden master password
 - The Bitwarden master password is passed to the CLI through a process environment variable and is not persisted by DOWNLOWd
 - The returned `BW_SESSION` value is held in process memory and passed only to child `bw` commands
 - Failed login/unlock and cancelled 2FA clear the in-memory session
 - Authentication success/failure/cancellation events are written to the audit log
-
-Keychain keys: `app_password_hash`, `app_password_salt`, `app_session_token`, `app_session_created_at`.
+- There is no separate DOWNLOWd app password gate
 
 ### 3. Transaction Logging
 
@@ -44,7 +40,7 @@ Independent milestone checks (overdue day-15/20 are not blocked by unfinished da
 | 15 | Auto-shred employee transactions |
 | 20 | Secure-delete matching log files; scrub employee lines from audit log (fail closed on errors) |
 
-- Scheduler starts after successful app and Bitwarden authentication
+- Scheduler starts after successful Bitwarden authentication
 - Employees are registered from the onboarding pipeline after a successful convert
 
 ### 5. Security Audit Logging
@@ -80,7 +76,7 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 
 | Path | Role |
 |------|------|
-| `integrations.py` | Keychain settings, PBKDF2 app auth, and Bitwarden gateway |
+| `integrations.py` | Keychain settings and Bitwarden CLI gateway |
 | `onboarding.py` | Pipeline orchestrator |
 | `bw_import_converter.py` | HQ → Bitwarden JSON (single converter source) |
 | `transaction_db.py` | SQLite transactions |

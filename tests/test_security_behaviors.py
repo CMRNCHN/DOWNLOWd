@@ -615,6 +615,48 @@ class OnboardingTests(unittest.TestCase):
             self.assertEqual(disposed[0].parent, temp_dir)
 
 
+class HqTemplateTests(unittest.TestCase):
+    def test_write_hq_file_round_trips_through_converter(self):
+        from hq_template import HQ_TEMPLATE_HEADER, validate_manual_values, write_hq_file
+
+        values = {
+            "firstname": "Ada",
+            "middlename": "",
+            "lastname": "Lovelace",
+            "dob": "1815-12-10",
+            "ssn": "000-00-0000",
+            "address": "1 Analytical Engine",
+            "city": "London",
+            "state": "ENG",
+            "zip": "SW1A",
+            "country": "UK",
+            "phone": "555-0100",
+            "email": "ada@example.com",
+            "cc": "4111111111111111",
+            "expmonth": "12",
+            "expyear": "30",
+            "cvv": "123",
+            "brand": "Visa",
+        }
+        self.assertEqual(validate_manual_values(values), [])
+        with tempfile.TemporaryDirectory() as directory:
+            source = write_hq_file(values, Path(directory))
+            self.assertTrue(source.name.startswith("HQ-"))
+            text = source.read_text(encoding="utf-8")
+            self.assertTrue(text.startswith(HQ_TEMPLATE_HEADER))
+            output = Path(directory) / "out.json"
+            result = BitwardenConverter(source, output, "shared-pass").run()
+            self.assertEqual(result["items_generated"], 3)
+            self.assertEqual(result["employees"][0]["username"], "adalovelace1815")
+
+    def test_validate_manual_values_requires_core_fields(self):
+        from hq_template import validate_manual_values
+
+        errors = validate_manual_values({"firstname": "Ada"})
+        self.assertTrue(any("Last name" in error for error in errors))
+        self.assertTrue(any("Card number" in error for error in errors))
+
+
 class AssistHelpersTests(unittest.TestCase):
     def test_normalize_personal_data_fills_aliases(self):
         data = normalize_personal_data(

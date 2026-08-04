@@ -2,7 +2,7 @@
 """
 DOWNLOWd — secure employee onboarding appliance GUI.
 
-Startup: Keychain-backed app password, then Bitwarden login.
+Startup: Bitwarden master password unlock.
 Dashboard: intake → Bitwarden → partner accounts → lockdown.
 Settings: disposal modes, provisioning toggles, collection config.
 """
@@ -51,7 +51,8 @@ from employee_profiles import (
     ProfileSyncService,
     RECORD_ROLES,
 )
-from integrations import BitwardenService, CredentialStore, SessionManager
+from hq_template import HQ_TEMPLATE_FIELDS, write_hq_file
+from integrations import BitwardenService, CredentialStore
 from onboarding import BitwardenConfig, Onboarding, OnboardingConfig
 from secure_delete import (
     BW_SHRED_MODES,
@@ -445,98 +446,6 @@ def _auth_primary_button(parent: ctk.CTkFrame, text: str, command: Callable[[], 
     return button
 
 
-class AppPasswordDialog(ctk.CTkToplevel):
-    """Create or verify the local application password."""
-
-    def __init__(self, parent: tk.Tk, session_manager: SessionManager):
-        super().__init__(parent)
-        self.session_manager = session_manager
-        self.audit = get_audit_logger()
-        self.success = False
-        self.setup_mode = not session_manager.has_password()
-
-        self.title("Set DOWNLOWd Password" if self.setup_mode else "Unlock DOWNLOWd")
-        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
-        self._build_ui()
-        _present_auth_dialog(self, parent)
-
-    def _on_cancel(self):
-        self.audit.log_authentication(False, method="app_password_cancelled")
-        try:
-            self.grab_release()
-        except tk.TclError:
-            pass
-        self.destroy()
-
-    def _build_ui(self):
-        card = _auth_shell(self, height=520 if self.setup_mode else 460)
-        title = "Create app password" if self.setup_mode else "Unlock workspace"
-        subtitle = (
-            "Protect local onboarding controls with a separate password."
-            if self.setup_mode
-            else "Enter your DOWNLOWd app password to continue."
-        )
-        _auth_brand(card, title, subtitle)
-
-        form = ctk.CTkFrame(card, fg_color="transparent", corner_radius=0)
-        form.pack(fill=tk.BOTH, expand=True, padx=28, pady=(0, 28))
-
-        _auth_field_label(form, "App Password")
-        password_var = tk.StringVar()
-        password_entry = _auth_entry(form, textvariable=password_var, show="•")
-
-        confirm_var = tk.StringVar()
-        if self.setup_mode:
-            _auth_field_label(form, "Confirm Password")
-            _auth_entry(form, textvariable=confirm_var, show="•")
-
-        status_var = tk.StringVar()
-        ctk.CTkLabel(
-            form,
-            textvariable=status_var,
-            font=("Helvetica Neue", 11),
-            text_color=C["danger"],
-            anchor="w",
-        ).pack(fill=tk.X, pady=(0, 8))
-
-        def submit():
-            password = password_var.get()
-            if self.setup_mode:
-                if len(password) < 8:
-                    status_var.set("Use at least 8 characters.")
-                    return
-                if password != confirm_var.get():
-                    status_var.set("Passwords do not match.")
-                    return
-                accepted = self.session_manager.set_password(password)
-                if accepted:
-                    accepted = self.session_manager.create_session(password)
-                method = "app_password_setup"
-            else:
-                accepted = self.session_manager.create_session(password)
-                method = "app_password"
-
-            self.audit.log_authentication(accepted, method=method)
-            if not accepted:
-                status_var.set("Incorrect password or Keychain storage failed.")
-                password_var.set("")
-                return
-            self.success = True
-            try:
-                self.grab_release()
-            except tk.TclError:
-                pass
-            self.destroy()
-
-        _auth_primary_button(
-            form,
-            "Create Password" if self.setup_mode else "Unlock",
-            submit,
-        )
-        password_entry.bind("<Return>", lambda _event: submit())
-        password_entry.focus()
-
-
 class BitwardenLoginDialog(ctk.CTkToplevel):
     """Gate the entire app behind Bitwarden CLI login/unlock."""
 
@@ -697,7 +606,6 @@ class AppGUI:
         apply_theme(self.root)
 
         self.credential_store = CredentialStore()
-        self.session_manager = SessionManager(self.credential_store)
         self.bw_service = BitwardenService()
         self.transaction_db = TransactionDatabase()
         self.profile_store = EmployeeProfileStore()
@@ -724,13 +632,6 @@ class AppGUI:
         self._setup_file_logging()
         self._auth_ok = False
         self.root.protocol("WM_DELETE_WINDOW", self._shutdown)
-
-        if not self.session_manager.is_authenticated():
-            app_dialog = AppPasswordDialog(self.root, self.session_manager)
-            app_dialog.wait_window()
-            if not app_dialog.success:
-                self._abort_startup()
-                return
 
         if self.bw_service.session_key and self._bw_ready():
             self._auth_ok = True
@@ -769,26 +670,6 @@ class AppGUI:
         self.root.after(500, self._warn_if_filevault_off)
         if self.credential_store.get("sync_on_startup", "true") == "true":
             self.root.after(750, self.dashboard._sync_profiles)
-        self.root.after(60_000, self._enforce_app_session)
-
-    def _enforce_app_session(self):
-        if not self.session_manager.is_authenticated():
-            self.audit.log_authentication(False, method="app_session_expired")
-            if hasattr(self, "dashboard"):
-                self.dashboard._clear_profile_secrets()
-            self.bw_service.clear_session()
-            self.retention_manager.stop_scheduler()
-            messagebox.showwarning(
-                "Session expired",
-                "Your one-hour DOWNLOWd session expired. Reopen the app to authenticate again.",
-                parent=self.root,
-            )
-            try:
-                self.root.destroy()
-            except tk.TclError:
-                pass
-            return
-        self.root.after(60_000, self._enforce_app_session)
 
     def _shutdown(self):
         self.retention_manager.stop_scheduler()
@@ -1032,7 +913,45 @@ class Dashboard(ttk.Frame):
             textvariable=self.employee_count,
             font=("Menlo", 10, "bold"),
             text_color=C["accent"],
-        ).pack(side=tk.RIGHT)
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        actions = ctk.CTkFrame(head, fg_color="transparent")
+        actions.pack(side=tk.RIGHT)
+        ctk.CTkButton(
+            actions,
+            text="Manual",
+            command=self._open_manual_employee_dialog,
+            width=58,
+            height=24,
+            corner_radius=2,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            text_color=C["paper"],
+            font=("Menlo", 9),
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        ctk.CTkButton(
+            actions,
+            text="File",
+            command=self._browse_files,
+            width=42,
+            height=24,
+            corner_radius=2,
+            fg_color=C["surface"],
+            hover_color=C["card_hi"],
+            text_color=C["ink"],
+            font=("Menlo", 9),
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        ctk.CTkButton(
+            actions,
+            text="Run",
+            command=lambda: self.run_pipeline(quiet=False),
+            width=42,
+            height=24,
+            corner_radius=2,
+            fg_color=C["ink"],
+            hover_color="#2a2a2a",
+            text_color=C["paper"],
+            font=("Menlo", 9),
+        ).pack(side=tk.LEFT)
 
         self.employee_scroll = ctk.CTkScrollableFrame(
             people,
@@ -2030,6 +1949,144 @@ class Dashboard(ttk.Frame):
         if files:
             self._queue_files(files)
 
+    def _open_manual_employee_dialog(self) -> None:
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Manual employee")
+        dialog.geometry("420x640")
+        dialog.configure(fg_color=C["bg"])
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        card = ctk.CTkFrame(
+            dialog,
+            fg_color=C["card"],
+            corner_radius=2,
+            border_width=1,
+            border_color=C["border"],
+        )
+        card.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        ctk.CTkLabel(
+            card,
+            text="Manual employee",
+            font=F_TITLE,
+            text_color=C["ink"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=16, pady=(14, 2))
+        ctk.CTkLabel(
+            card,
+            text="Same fields as an HQ export. Saves HQ-*.txt to Downloads, then you can Run.",
+            font=F_CAPTION,
+            text_color=C["muted"],
+            wraplength=360,
+            justify="left",
+            anchor="w",
+        ).pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        form = ctk.CTkScrollableFrame(card, fg_color="transparent")
+        form.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+        field_vars: Dict[str, tk.StringVar] = {}
+        first_entry: Optional[ctk.CTkEntry] = None
+        for key, label, required in HQ_TEMPLATE_FIELDS:
+            mark = " *" if required else ""
+            ctk.CTkLabel(
+                form,
+                text=f"{label}{mark}",
+                font=F_CAPTION,
+                text_color=C["muted"],
+                anchor="w",
+            ).pack(fill=tk.X, pady=(8, 2))
+            var = tk.StringVar()
+            field_vars[key] = var
+            show = "•" if key in {"ssn", "cc", "cvv"} else ""
+            entry = ctk.CTkEntry(
+                form,
+                textvariable=var,
+                height=32,
+                corner_radius=2,
+                border_width=1,
+                border_color=C["border"],
+                fg_color=C["surface"],
+                show=show,
+                font=("Menlo", 11) if key in {"ssn", "cc", "cvv", "dob"} else F_BODY,
+            )
+            entry.pack(fill=tk.X)
+            if first_entry is None:
+                first_entry = entry
+
+        status_var = tk.StringVar()
+        ctk.CTkLabel(
+            card,
+            textvariable=status_var,
+            font=F_CAPTION,
+            text_color=C["danger"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=16)
+
+        def close() -> None:
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+
+        def save(*, run_after: bool) -> None:
+            values = {key: var.get() for key, var in field_vars.items()}
+            try:
+                path = write_hq_file(values, DOWNLOADS)
+            except ValueError as exc:
+                status_var.set(str(exc))
+                return
+            self.log_msg(f"Queued manual employee {path.name}")
+            self._refresh_queued_files()
+            self.status.set(f"Saved {path.name}")
+            close()
+            if run_after:
+                self.run_pipeline(quiet=False)
+            else:
+                messagebox.showinfo(
+                    "Queued",
+                    f"Wrote {path.name} to Downloads.\nPress Run when ready.",
+                    parent=self,
+                )
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill=tk.X, padx=14, pady=(4, 14))
+        ctk.CTkButton(
+            actions,
+            text="Save & Run",
+            command=lambda: save(run_after=True),
+            height=34,
+            corner_radius=2,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            text_color=C["paper"],
+            font=("Helvetica Neue", 12, "bold"),
+        ).pack(side=tk.LEFT)
+        ctk.CTkButton(
+            actions,
+            text="Save only",
+            command=lambda: save(run_after=False),
+            height=34,
+            corner_radius=2,
+            fg_color=C["surface"],
+            hover_color=C["card_hi"],
+            text_color=C["ink"],
+            font=("Helvetica Neue", 12),
+        ).pack(side=tk.LEFT, padx=6)
+        ctk.CTkButton(
+            actions,
+            text="Cancel",
+            command=close,
+            height=34,
+            corner_radius=2,
+            fg_color="transparent",
+            hover_color=C["card_hi"],
+            text_color=C["muted"],
+            font=("Helvetica Neue", 12),
+        ).pack(side=tk.RIGHT)
+        if first_entry is not None:
+            first_entry.focus()
+
     def _on_drop(self, event: Any) -> None:
         files = self.app.root.splitlist(event.data)
         self._queue_files(files)
@@ -2611,7 +2668,7 @@ class Dashboard(ttk.Frame):
         if not profiles:
             ctk.CTkLabel(
                 self.employee_grid,
-                text="No employees yet — drop an HQ file to start",
+                text="No employees yet — Manual entry or File → Run",
                 font=F_BODY,
                 text_color=C["muted"],
                 wraplength=180,

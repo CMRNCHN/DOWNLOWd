@@ -42,5 +42,6 @@ py-modules = [
     "employee_profiles",
     "audit_logger",
     "account_automation",
+    "hq_template",
     "secure_delete",
 ]

@@ -4,7 +4,7 @@ An automated desktop tool for streamlining new employee onboarding tasks. The ap
 
 ## Security Features
 
-- **Two authentication gates** — a separate PBKDF2-protected app password, then Bitwarden login/unlock
+- **Bitwarden unlock** — workspace opens after Bitwarden master password login/unlock (no separate app password)
 - **macOS Keychain** — stores settings and remembered Bitwarden email
 - **Transaction Logging** — local SQLite with owner-only (`0o600`) permissions — **not encrypted at rest** (FileVault recommended)
 - **Local disposal modes** — standard unlink, overwrite-then-delete, or best-effort secure erase (APFS/SSD: FileVault is the real protection)
@@ -15,24 +15,23 @@ See [SECURITY_FEATURES.md](SECURITY_FEATURES.md) for details.
 
 ## Onboarding Workflow
 
-1. **Unlock DOWNLOWd**, then sign in to Bitwarden
-2. **Intake** — drop/browse `HQ-*.txt` / `HQ-*.rtf` into the queue
+1. **Sign in with Bitwarden** (master password)
+2. **Intake** — Manual entry (same HQ fields), or drop/browse `HQ-*.txt` / `HQ-*.rtf`
 3. **Shared passphrase** — one passphrase for every new employee login (they change it later)
-4. **Run full onboarding** — convert → Bitwarden import → all Outlook signups → all Hyatt signups → all Marriott signups → dispose local files
+4. **Run** — convert → Bitwarden import → Outlook / Hyatt / Marriott assist → dispose local files
 5. **Usernames** — `firstnamelastnameYEAR` (birth year)
-6. **Profiles workspace** — live Identity, Email Login, Hyatt, Marriott, and Work Card records are fetched from Bitwarden on selection; secrets are masked by default
-7. **Resume or edit** — resume missing accounts or revision-safely edit the native Identity record without rewriting unknown vault fields
-8. **Recoverable deletion** — trash only the selected profile’s bound item IDs, restore during a two-day window, then permanently purge on the next unlocked scheduler run
+6. **Profiles** — live Identity, Email Login, Hyatt, Marriott, and Work Card from Bitwarden
+7. **Resume or edit** — resume missing accounts or edit Identity without rewriting unknown vault fields
+8. **Recoverable deletion** — trash bound item IDs, restore for two days, then permanent purge
 
 ### First launch
 
-1. Create a separate DOWNLOWd app password (minimum 8 characters)
-2. Sign in with Bitwarden (email + master password, + 2FA if enabled)
-3. Enter the **shared employee passphrase** and choose the Bitwarden destination:
+1. Sign in with Bitwarden (email + master password, + 2FA if enabled)
+2. Enter the **shared employee passphrase** and choose the Bitwarden destination:
    **Personal Vault** for personal accounts, or an exact organization collection name.
    Missing/unavailable organization collections stop the run; they never silently fall back to a personal vault.
-4. Queue HQ files, then **Run full onboarding**
-5. Configure disposal / partner toggles under **Settings**
+3. Add an employee via **Manual** or queue an HQ file, then **Run**
+4. Configure disposal / partner toggles under **Settings**
 
 ## Developer Setup
 
