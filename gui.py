@@ -886,8 +886,8 @@ class Dashboard(ttk.Frame):
 
         body = ctk.CTkFrame(shell, fg_color="transparent")
         body.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 6))
-        body.grid_columnconfigure(0, weight=5)
-        body.grid_columnconfigure(1, weight=4)
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=5)
         body.grid_rowconfigure(0, weight=1)
 
         # Roster tray
@@ -961,17 +961,53 @@ class Dashboard(ttk.Frame):
         self.employee_scroll.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 8))
         self.employee_grid = self.employee_scroll
 
-        # Spend tray
-        ledger = ctk.CTkFrame(
-            body,
+        # Right column: preview + spend
+        right = ctk.CTkFrame(body, fg_color="transparent")
+        right.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        right.grid_rowconfigure(0, weight=3)
+        right.grid_rowconfigure(1, weight=2)
+        right.grid_columnconfigure(0, weight=1)
+
+        preview = ctk.CTkFrame(
+            right,
             fg_color=C["card"],
             corner_radius=2,
             border_width=1,
             border_color=C["border"],
         )
-        ledger.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        preview.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
+        phead = ctk.CTkFrame(preview, fg_color="transparent")
+        phead.pack(fill=tk.X, padx=12, pady=(10, 4))
+        ctk.CTkLabel(
+            phead,
+            text="Preview",
+            font=F_CAPTION,
+            text_color=C["muted"],
+        ).pack(side=tk.LEFT)
+        ctk.CTkLabel(
+            phead,
+            text="double-click for full",
+            font=("Menlo", 8),
+            text_color=C["status"],
+        ).pack(side=tk.RIGHT)
+
+        self.preview_host = ctk.CTkFrame(preview, fg_color="transparent")
+        self.preview_host.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.preview_title = tk.StringVar(value="Select an employee")
+        self.preview_meta = tk.StringVar(value="Single-click for preview · double-click for full profile")
+        self._show_preview_empty()
+
+        # Spend tray
+        ledger = ctk.CTkFrame(
+            right,
+            fg_color=C["card"],
+            corner_radius=2,
+            border_width=1,
+            border_color=C["border"],
+        )
+        ledger.grid(row=1, column=0, sticky="nsew")
         lhead = ctk.CTkFrame(ledger, fg_color="transparent")
-        lhead.pack(fill=tk.X, padx=12, pady=(10, 4))
+        lhead.pack(fill=tk.X, padx=12, pady=(8, 2))
         ctk.CTkLabel(
             lhead,
             text="Spend",
@@ -983,8 +1019,8 @@ class Dashboard(ttk.Frame):
             text="+",
             command=self._add_transaction_dialog,
             width=26,
-            height=26,
-            corner_radius=4,
+            height=24,
+            corner_radius=2,
             fg_color=C["accent"],
             hover_color=C["accent_hover"],
             text_color=C["paper"],
@@ -992,17 +1028,17 @@ class Dashboard(ttk.Frame):
         ).pack(side=tk.RIGHT)
 
         self.budget_overview = ctk.CTkFrame(ledger, fg_color="transparent")
-        self.budget_overview.pack(fill=tk.X, padx=8, pady=(0, 4))
+        self.budget_overview.pack(fill=tk.X, padx=8, pady=(0, 2))
 
         self.ledger_filter = tk.StringVar(value="All")
         self._ledger_filter_ids: Dict[str, Optional[str]] = {"All": None}
         self.ledger_chips = ctk.CTkFrame(ledger, fg_color="transparent")
-        self.ledger_chips.pack(fill=tk.X, padx=8, pady=(0, 4))
+        self.ledger_chips.pack(fill=tk.X, padx=8, pady=(0, 2))
 
-        list_frame = ctk.CTkFrame(ledger, fg_color=C["surface"], corner_radius=4)
+        list_frame = ctk.CTkFrame(ledger, fg_color=C["surface"], corner_radius=2)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
         cols = ("date", "merchant", "amount")
-        self.trans_tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=8)
+        self.trans_tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=5)
         for c, t, w in (("date", "Date", 68), ("merchant", "Where", 100), ("amount", "$", 48)):
             self.trans_tree.heading(c, text=t)
             self.trans_tree.column(c, width=w, anchor="w" if c != "amount" else "e")
@@ -1032,6 +1068,12 @@ class Dashboard(ttk.Frame):
 
         self._refresh_employee_list()
         self._refresh_transaction_list()
+        # Wider default so People + Preview + Spend fit.
+        try:
+            self.app.root.geometry("780x620+80+40")
+            self.app.root.minsize(680, 520)
+        except tk.TclError:
+            pass
 
     def _show_view(self, view_name: str):
         # Tabs removed — keep as no-op for any leftover callers.
@@ -1181,6 +1223,209 @@ class Dashboard(ttk.Frame):
             font=("Helvetica Neue", 12, "bold"),
         ).pack(fill=tk.X, padx=18, pady=(4, 16))
 
+    def _show_preview_empty(self) -> None:
+        if not hasattr(self, "preview_host"):
+            return
+        for child in self.preview_host.winfo_children():
+            child.destroy()
+        ctk.CTkLabel(
+            self.preview_host,
+            textvariable=self.preview_title,
+            font=F_TITLE,
+            text_color=C["ink"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=4, pady=(8, 2))
+        ctk.CTkLabel(
+            self.preview_host,
+            textvariable=self.preview_meta,
+            font=F_CAPTION,
+            text_color=C["muted"],
+            wraplength=280,
+            justify="left",
+            anchor="w",
+        ).pack(fill=tk.X, padx=4)
+
+    def _preview_employee(self, employee_id: str) -> None:
+        """Single-click: select employee and show in-window preview pane."""
+        profile = self.profile_store.get(employee_id)
+        if not profile:
+            return
+        self.selected_profile_id = employee_id
+        self.selected_employee = profile.get("display_name")
+        self._refresh_active_employees()
+        self._render_preview_pane(profile)
+        self.status.set(f"Preview · {profile.get('display_name', 'Employee')}")
+
+        def load():
+            try:
+                bundle = self.profile_sync.get_bundle(employee_id)
+                self.after(0, lambda: self._apply_preview_bundle(employee_id, bundle))
+            except Exception as exc:
+                self.after(
+                    0,
+                    lambda error=exc: self._preview_load_failed(employee_id, error),
+                )
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _render_preview_pane(self, profile: Dict[str, Any]) -> None:
+        for child in self.preview_host.winfo_children():
+            child.destroy()
+        name = profile.get("display_name", "Employee")
+        self.preview_title.set(name)
+        refs = profile.get("vault_refs") or {}
+        deletion = profile.get("deletion") or {}
+        status = str(deletion.get("status") or profile.get("status") or "active")
+        self.preview_meta.set(
+            f"{len(refs)}/5 records · {status} · loading vault…"
+        )
+
+        ctk.CTkLabel(
+            self.preview_host,
+            textvariable=self.preview_title,
+            font=("Helvetica Neue", 16, "bold"),
+            text_color=C["ink"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=4, pady=(4, 0))
+        ctk.CTkLabel(
+            self.preview_host,
+            textvariable=self.preview_meta,
+            font=("Menlo", 9),
+            text_color=C["muted"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=4, pady=(2, 8))
+
+        rail = ctk.CTkFrame(self.preview_host, fg_color=C["surface"], corner_radius=2)
+        rail.pack(fill=tk.X, padx=2, pady=(0, 8))
+        labels = {
+            "identity": "ID",
+            "email_login": "Email",
+            "work_card": "Card",
+            "hyatt_login": "Hyatt",
+            "marriott_login": "Marriott",
+        }
+        for role in RECORD_ROLES:
+            present = role in refs
+            ctk.CTkLabel(
+                rail,
+                text=labels.get(role, role),
+                font=("Menlo", 8, "bold"),
+                text_color=C["paper"] if present else C["muted"],
+                fg_color=C["accent"] if present else C["card_hi"],
+                corner_radius=2,
+                width=52,
+                height=22,
+            ).pack(side=tk.LEFT, padx=3, pady=6)
+
+        self.preview_fields = ctk.CTkFrame(self.preview_host, fg_color="transparent")
+        self.preview_fields.pack(fill=tk.BOTH, expand=True, padx=2)
+        ctk.CTkLabel(
+            self.preview_fields,
+            text="Loading identity…",
+            font=F_CAPTION,
+            text_color=C["muted"],
+            anchor="w",
+        ).pack(fill=tk.X)
+
+        actions = ctk.CTkFrame(self.preview_host, fg_color="transparent")
+        actions.pack(fill=tk.X, padx=2, pady=(8, 0))
+        eid = profile["employee_id"]
+        ctk.CTkButton(
+            actions,
+            text="Open full",
+            command=lambda: self._open_employee_modal(eid),
+            width=84,
+            height=30,
+            corner_radius=2,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
+            text_color=C["paper"],
+            font=("Helvetica Neue", 11, "bold"),
+        ).pack(side=tk.LEFT)
+        ctk.CTkButton(
+            actions,
+            text="Resume",
+            command=self._resume_profile_accounts,
+            width=72,
+            height=30,
+            corner_radius=2,
+            fg_color=C["surface"],
+            hover_color=C["card_hi"],
+            text_color=C["ink"],
+            font=("Helvetica Neue", 11),
+        ).pack(side=tk.LEFT, padx=6)
+
+    def _apply_preview_bundle(
+        self,
+        employee_id: str,
+        bundle: Dict[str, Dict[str, Any]],
+    ) -> None:
+        if self.selected_profile_id != employee_id:
+            bundle.clear()
+            return
+        # Keep secrets only while the full modal is open; preview shows redacted fields.
+        identity = bundle.get("identity") or {}
+        refs_count = len(bundle)
+        filled = 0
+        rows: List[Tuple[str, str]] = []
+        if identity and not identity.get("_load_error"):
+            for label, value, secret in self._identity_view_rows(identity)[:6]:
+                if value and value != "—":
+                    filled += 1
+                display = "••••••" if secret and value else (value if value else "—")
+                rows.append((label, display))
+        self.preview_meta.set(
+            f"{refs_count}/5 records · {filled} identity fields · {datetime.now().strftime('%H:%M')}"
+        )
+        if hasattr(self, "preview_fields") and self.preview_fields.winfo_exists():
+            for child in self.preview_fields.winfo_children():
+                child.destroy()
+            if not rows:
+                ctk.CTkLabel(
+                    self.preview_fields,
+                    text="No identity fields yet",
+                    font=F_CAPTION,
+                    text_color=C["muted"],
+                    anchor="w",
+                ).pack(fill=tk.X)
+            for label, value in rows:
+                row = ctk.CTkFrame(self.preview_fields, fg_color="transparent")
+                row.pack(fill=tk.X, pady=1)
+                ctk.CTkLabel(
+                    row,
+                    text=label,
+                    font=("Menlo", 8),
+                    text_color=C["muted"],
+                    width=72,
+                    anchor="w",
+                ).pack(side=tk.LEFT)
+                ctk.CTkLabel(
+                    row,
+                    text=value if len(value) <= 36 else value[:35] + "…",
+                    font=("Menlo", 9),
+                    text_color=C["ink"],
+                    anchor="w",
+                ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # Drop preview bundle from memory — full modal loads fresh on open.
+        bundle.clear()
+
+    def _preview_load_failed(self, employee_id: str, error: Exception) -> None:
+        if self.selected_profile_id != employee_id:
+            return
+        self.preview_meta.set("Vault locked or sync unavailable")
+        if hasattr(self, "preview_fields") and self.preview_fields.winfo_exists():
+            for child in self.preview_fields.winfo_children():
+                child.destroy()
+            ctk.CTkLabel(
+                self.preview_fields,
+                text=str(error),
+                font=F_CAPTION,
+                text_color=C["danger"],
+                wraplength=280,
+                justify="left",
+                anchor="w",
+            ).pack(fill=tk.X)
+
     def _open_employee_modal(self, employee_id: str):
         profile = self.profile_store.get(employee_id)
         if not profile:
@@ -1188,7 +1433,16 @@ class Dashboard(ttk.Frame):
         self.selected_profile_id = employee_id
         self.selected_employee = profile.get("display_name")
         self._clear_profile_secrets()
-        self._expand_window(True)
+        self._refresh_active_employees()
+
+        # Close an existing full profile if open.
+        if self._employee_modal is not None:
+            try:
+                if self._employee_modal.winfo_exists():
+                    self._employee_modal.destroy()
+            except tk.TclError:
+                pass
+            self._employee_modal = None
 
         dialog = ctk.CTkToplevel(self)
         dialog.title(profile.get("display_name", "Employee"))
@@ -1200,13 +1454,15 @@ class Dashboard(ttk.Frame):
 
         def on_close():
             self._clear_profile_secrets()
-            self._expand_window(False)
             try:
                 dialog.grab_release()
             except tk.TclError:
                 pass
             dialog.destroy()
             self._employee_modal = None
+            # Restore in-window preview for the same selection.
+            if self.selected_profile_id:
+                self._preview_employee(self.selected_profile_id)
 
         dialog.protocol("WM_DELETE_WINDOW", on_close)
 
@@ -1360,37 +1616,39 @@ class Dashboard(ttk.Frame):
         threading.Thread(target=load, daemon=True).start()
 
     def _expand_window(self, large: bool) -> None:
+        """Keep a stable workspace size; preview lives in-window."""
         root = self.app.root
         try:
-            if large:
-                root.geometry("760x640+80+40")
-                root.minsize(640, 560)
-            else:
-                root.geometry("480x560+120+60")
-                root.minsize(420, 480)
+            root.geometry("780x620+80+40")
+            root.minsize(680, 520)
         except tk.TclError:
             pass
 
     def _refresh_profiles_list(self):
         self._refresh_active_employees()
+        modal_open = False
         if self.selected_profile_id and getattr(self, "_employee_modal", None):
             try:
-                if self._employee_modal.winfo_exists() and not self.profile_bundle:
-                    # reload after sync
-                    eid = self.selected_profile_id
-                    def load():
-                        try:
-                            bundle = self.profile_sync.get_bundle(eid)
-                            self.after(0, lambda: self._apply_profile_bundle(eid, bundle))
-                        except Exception as exc:
-                            self.after(0, lambda error=exc: self._profile_load_failed(eid, error))
-                    threading.Thread(target=load, daemon=True).start()
+                modal_open = bool(self._employee_modal.winfo_exists())
             except tk.TclError:
-                pass
+                modal_open = False
+            if modal_open and not self.profile_bundle:
+                eid = self.selected_profile_id
+
+                def load():
+                    try:
+                        bundle = self.profile_sync.get_bundle(eid)
+                        self.after(0, lambda: self._apply_profile_bundle(eid, bundle))
+                    except Exception as exc:
+                        self.after(0, lambda error=exc: self._profile_load_failed(eid, error))
+
+                threading.Thread(target=load, daemon=True).start()
+        if self.selected_profile_id and not modal_open:
+            self._preview_employee(self.selected_profile_id)
 
     def _on_profile_selected(self, _event=None):
         if self.selected_profile_id:
-            self._open_employee_modal(self.selected_profile_id)
+            self._preview_employee(self.selected_profile_id)
 
     def _apply_profile_bundle(self, employee_id: str, bundle: Dict[str, Dict[str, Any]]):
         if self.selected_profile_id != employee_id:
@@ -1823,7 +2081,12 @@ class Dashboard(ttk.Frame):
             f"failed={self._redacted_item_ids(result.get('failed', []))}",
         )
         self._clear_profile_secrets()
+        self.selected_profile_id = None
+        self.selected_employee = None
         self._refresh_employee_list()
+        self.preview_title.set("Select an employee")
+        self.preview_meta.set("Single-click for preview · double-click for full profile")
+        self._show_preview_empty()
         self.status.set("Profile moved to trash")
         modal = getattr(self, "_employee_modal", None)
         if modal is not None:
@@ -1832,7 +2095,6 @@ class Dashboard(ttk.Frame):
             except tk.TclError:
                 pass
             self._employee_modal = None
-            self._expand_window(False)
 
     def _restore_selected_profile(self):
         employee_id = self.selected_profile_id
@@ -1860,7 +2122,7 @@ class Dashboard(ttk.Frame):
         self.status.set("Profile restored")
         self._refresh_employee_list()
         if self.selected_profile_id == employee_id:
-            self._open_employee_modal(employee_id)
+            self._preview_employee(employee_id)
 
     def _set_step(self, key: str, detail: str = "") -> None:
         labels = {
@@ -2724,13 +2986,18 @@ class Dashboard(ttk.Frame):
                 bg=C["accent_dim"] if selected else C["card"],
             ).pack(side=tk.RIGHT, padx=6)
 
-            def open_profile(_event=None, eid=employee_id):
+            def preview(_event=None, eid=employee_id):
+                self._preview_employee(eid)
+
+            def open_full(_event=None, eid=employee_id):
                 self._open_employee_modal(eid)
 
             for widget in (row, tag, copy):
-                widget.bind("<Button-1>", open_profile)
+                widget.bind("<Button-1>", preview)
+                widget.bind("<Double-Button-1>", open_full)
             for child in list(copy.winfo_children()):
-                child.bind("<Button-1>", open_profile)
+                child.bind("<Button-1>", preview)
+                child.bind("<Double-Button-1>", open_full)
 
     def _select_employee(self, employee_name: str):
         self.selected_employee = employee_name
@@ -2743,7 +3010,7 @@ class Dashboard(ttk.Frame):
             None,
         )
         if profile:
-            self._open_employee_modal(profile["employee_id"])
+            self._preview_employee(profile["employee_id"])
 
     def _refresh_transaction_list(self):
         if not hasattr(self, "trans_tree"):
