@@ -312,6 +312,22 @@ class AccountCreator:
                 if not elements:
                     continue
                 el = next((item for item in elements if item.is_displayed()), elements[0])
+                tag = (el.tag_name or "").lower()
+                if tag == "select":
+                    # Prefer visible option text / value match for country/region selects.
+                    options = el.find_elements(By.CSS_SELECTOR, "option")
+                    target = value.strip().casefold()
+                    for option in options:
+                        opt_value = (option.get_attribute("value") or "").strip()
+                        opt_text = (option.text or "").strip()
+                        if target in {
+                            opt_value.casefold(),
+                            opt_text.casefold(),
+                        } or target in opt_text.casefold():
+                            option.click()
+                            return True
+                    el.send_keys(value)
+                    return True
                 el.clear()
                 el.send_keys(value)
                 return True

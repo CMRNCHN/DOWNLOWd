@@ -216,6 +216,8 @@ class Onboarding:
                 "username": emp.get("username", ""),
                 "email": emp.get("email", ""),
                 "password": password,
+                "postal": emp.get("postal") or emp.get("postal_code") or emp.get("zip") or "",
+                "country": emp.get("country") or "USA",
             }
             account_name = emp.get("username") or emp.get("full_name", "unknown")
             account_records.append(
@@ -442,6 +444,11 @@ class Onboarding:
         personal_data = {
             **employee,
             "password": password,
+            "postal": profile.get("postal")
+            or profile.get("postal_code")
+            or profile.get("zip")
+            or "",
+            "country": profile.get("country") or "USA",
         }
         account_name = employee.get("username") or employee_name
         accounts = profile.get("accounts") or {}

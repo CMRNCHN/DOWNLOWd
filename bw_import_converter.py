@@ -248,6 +248,19 @@ class BitwardenConverter:
                     "last_name": last_name,
                     "email": f"{username}@outlook.com",
                     "employee_id": employee_id,
+                    # Assist/signup aliases (Marriott postal/country when HQ provides them).
+                    "postal": (
+                        row_data.get("postalcode")
+                        or row_data.get("zip")
+                        or row_data.get("zipcode")
+                        or ""
+                    ).strip(),
+                    "country": (
+                        row_data.get("country")
+                        or row_data.get("countryregion")
+                        or "USA"
+                    ).strip()
+                    or "USA",
                 })
 
         return items, employees

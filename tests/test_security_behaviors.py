@@ -12,6 +12,8 @@ import integrations
 import onboarding
 import data_retention
 from account_automation import (
+    ASSIST_FIELD_KEYS,
+    AccountCreator,
     format_assist_payload,
     normalize_personal_data,
     parse_confirmation,
@@ -702,6 +704,27 @@ class AssistHelpersTests(unittest.TestCase):
         self.assertEqual(parse_confirmation("retry"), "retry")
         self.assertEqual(parse_confirmation("skip"), "skip")
         self.assertEqual(parse_confirmation("yes"), "done")
+
+    def test_prefer_system_browser_handoff_skips_selenium(self):
+        creator = AccountCreator(prefer_system_browser=True)
+        personal = {
+            "full_name": "Ada Lovelace",
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@example.com",
+            "password": "secret",
+            "postal": "02139",
+        }
+        with mock.patch("account_automation.webbrowser.open") as open_browser:
+            result = creator.create_marriott_account(personal, "adalovelace1815")
+        open_browser.assert_called_once()
+        self.assertEqual(result["status"], "manual_only")
+        self.assertEqual(result["service"], "Marriott")
+        self.assertEqual(result["filled_fields"], [])
+        self.assertEqual(result["assist_fields"], list(ASSIST_FIELD_KEYS))
+        self.assertIn("first_name: Ada", result["payload"])
+        self.assertIn("postal: 02139", result["payload"])
+        self.assertEqual(result["personal_data"]["confirm_password"], "secret")
 
 
 class BitwardenItemApiTests(unittest.TestCase):
