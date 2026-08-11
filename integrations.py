@@ -1,4 +1,4 @@
-"""Keychain-backed application auth and the Bitwarden CLI gateway."""
+"""File-backed credentials, PIN auth, and the Bitwarden CLI gateway."""
 
 from __future__ import annotations
 
@@ -13,18 +13,21 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import keyring
-from keyring.errors import KeyringError
-
 CREDENTIALS_FILE = Path.home() / ".onboarding_credentials.json"
+SECURE_CREDENTIALS_FILE = Path.home() / ".downlowd" / "credentials.json"
 KEYRING_SERVICE = "DOWNLOWD"
 
 APP_PASSWORD_HASH_KEY = "app_password_hash"
 APP_PASSWORD_SALT_KEY = "app_password_salt"
 APP_SESSION_TOKEN_KEY = "app_session_token"
 APP_SESSION_CREATED_KEY = "app_session_created_at"
+APP_PIN_HASH_KEY = "app_pin_hash"
+APP_PIN_SALT_KEY = "app_pin_salt"
+BW_SECRET_KEY = "bw_master_secret"
 PBKDF2_ITERATIONS = 200_000
 APP_SESSION_TIMEOUT_SECONDS = 3600
+PIN_MIN_LEN = 4
+PIN_MAX_LEN = 8
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -41,8 +44,17 @@ def _clean_cli_text(text: str) -> str:
 
 
 class CredentialStore:
-    def __init__(self):
-        self._migrate_to_keychain()
+    """Settings store: chmod-600 JSON under ~/.downlowd (no Keychain prompts)."""
+
+    def __init__(self, path: Optional[Path] = None):
+        self.path = Path(path) if path else SECURE_CREDENTIALS_FILE
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(self.path.parent, 0o700)
+        except OSError:
+            pass
+        self._data = self._load()
+        self._migrate_legacy_sources()
 
     def _secure_delete_file(self, file_path: Path) -> None:
         """Overwrite then unlink a file; raise if unlink fails after overwrite."""
@@ -63,58 +75,184 @@ class CredentialStore:
             logging.error("Failed to securely delete file %s: %s", file_path, e)
             raise
 
-    def _migrate_to_keychain(self):
-        """Migrate existing plaintext credentials to Keychain, then shred the source file."""
+    def _load(self) -> Dict[str, str]:
+        if not self.path.exists():
+            return {}
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return {str(k): str(v) for k, v in payload.items() if v is not None}
+        except (json.JSONDecodeError, OSError) as e:
+            logging.error("Could not read credentials file: %s", e)
+        return {}
+
+    def _save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(json.dumps(self._data, indent=2) + "\n", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(self.path)
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+
+    def _migrate_legacy_sources(self) -> None:
         if not CREDENTIALS_FILE.exists():
             return
         try:
             old_creds = json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
+            changed = False
             for key, value in old_creds.items():
-                if not value:
-                    continue
-                expected = str(value)
-                existing = keyring.get_password(KEYRING_SERVICE, key)
-                if existing is None:
-                    keyring.set_password(KEYRING_SERVICE, key, expected)
-                    existing = keyring.get_password(KEYRING_SERVICE, key)
-                if existing != expected:
-                    raise KeyringError(f"Keychain verification failed for '{key}'")
-                logging.info("Migrated credential '%s' to Keychain", key)
-            # Shred original; do not leave a plaintext .backup
+                if value and key not in self._data:
+                    self._data[str(key)] = str(value)
+                    changed = True
+            if changed:
+                self._save()
             self._secure_delete_file(CREDENTIALS_FILE)
-            logging.info("Credentials migrated to Keychain; source file securely deleted")
-        except (json.JSONDecodeError, KeyringError, OSError) as e:
-            # Leave original intact on failure
-            logging.error("Could not migrate credentials (original file left intact): %s", e)
-
+            logging.info("Migrated legacy credentials file into %s", self.path)
+        except (json.JSONDecodeError, OSError) as e:
+            logging.error("Could not migrate legacy credentials file: %s", e)
 
     def get(self, key: str, default: Any = None) -> Any:
-        try:
-            value = keyring.get_password(KEYRING_SERVICE, key)
-            return value if value is not None else default
-        except KeyringError as e:
-            logging.error("Keychain error for '%s': %s", key, e)
-            return default
+        return self._data.get(key, default)
 
     def get_all(self) -> Dict[str, str]:
-        return {}
+        return dict(self._data)
 
     def update(self, new_creds: Dict[str, str]):
+        changed = False
         for key, value in new_creds.items():
-            try:
-                if value:
-                    keyring.set_password(KEYRING_SERVICE, key, value)
-                else:
-                    try:
-                        keyring.delete_password(KEYRING_SERVICE, key)
-                    except keyring.errors.PasswordDeleteError:
-                        pass
-            except KeyringError as e:
-                logging.error("Failed to store credential '%s': %s", key, e)
+            if value:
+                if self._data.get(key) != str(value):
+                    self._data[key] = str(value)
+                    changed = True
+            elif key in self._data:
+                del self._data[key]
+                changed = True
+        if changed:
+            self._save()
+
+
+class PinAuth:
+    """App PIN (letters and/or digits) that unlocks an encrypted Bitwarden master password."""
+
+    def __init__(self, credential_store: CredentialStore):
+        self.store = credential_store
+
+    @staticmethod
+    def normalize_pin(pin: str) -> str:
+        # Letters + digits only; case-sensitive as typed.
+        return "".join(ch for ch in str(pin or "") if ch.isalnum())
+
+    @classmethod
+    def validate_pin(cls, pin: str) -> Optional[str]:
+        raw = str(pin or "").strip()
+        normalized = cls.normalize_pin(raw)
+        if len(normalized) < PIN_MIN_LEN or len(normalized) > PIN_MAX_LEN:
+            return f"PIN must be {PIN_MIN_LEN}–{PIN_MAX_LEN} letters and/or numbers."
+        if normalized != raw:
+            return "PIN can only include letters and numbers (no spaces or symbols)."
+        return None
+
+    def has_pin(self) -> bool:
+        return bool(
+            self.store.get(APP_PIN_HASH_KEY)
+            and self.store.get(APP_PIN_SALT_KEY)
+            and self.store.get(BW_SECRET_KEY)
+            and self.store.get("bw_email")
+        )
+
+    @staticmethod
+    def _hash_pin(pin: str, salt: bytes) -> str:
+        return hashlib.pbkdf2_hmac(
+            "sha256",
+            pin.encode("utf-8"),
+            salt,
+            PBKDF2_ITERATIONS,
+        ).hex()
+
+    @staticmethod
+    def _fernet_for_pin(pin: str, salt: bytes):
+        import base64
+
+        from cryptography.fernet import Fernet
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=PBKDF2_ITERATIONS,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(pin.encode("utf-8")))
+        return Fernet(key)
+
+    def setup(self, *, email: str, master_password: str, pin: str) -> Optional[str]:
+        error = self.validate_pin(pin)
+        if error:
+            return error
+        email = email.strip()
+        if not email or "@" not in email:
+            return "Enter a valid Bitwarden email."
+        if not master_password:
+            return "Enter your Bitwarden master password."
+        pin = self.normalize_pin(pin)
+        salt = secrets.token_bytes(16)
+        token = self._fernet_for_pin(pin, salt).encrypt(master_password.encode("utf-8"))
+        self.store.update(
+            {
+                "bw_email": email,
+                APP_PIN_SALT_KEY: salt.hex(),
+                APP_PIN_HASH_KEY: self._hash_pin(pin, salt),
+                BW_SECRET_KEY: token.decode("ascii"),
+            }
+        )
+        return None
+
+    def verify_pin(self, pin: str) -> bool:
+        pin = self.normalize_pin(pin)
+        stored_hash = self.store.get(APP_PIN_HASH_KEY)
+        salt_hex = self.store.get(APP_PIN_SALT_KEY)
+        if not stored_hash or not salt_hex or not pin:
+            return False
+        try:
+            salt = bytes.fromhex(str(salt_hex))
+        except ValueError:
+            return False
+        return secrets.compare_digest(self._hash_pin(pin, salt), str(stored_hash))
+
+    def unlock_master_password(self, pin: str) -> Optional[str]:
+        if not self.verify_pin(pin):
+            return None
+        salt_hex = self.store.get(APP_PIN_SALT_KEY)
+        secret = self.store.get(BW_SECRET_KEY)
+        if not salt_hex or not secret:
+            return None
+        try:
+            salt = bytes.fromhex(str(salt_hex))
+            return (
+                self._fernet_for_pin(self.normalize_pin(pin), salt)
+                .decrypt(str(secret).encode("ascii"))
+                .decode("utf-8")
+            )
+        except Exception:
+            logging.error("Failed to decrypt Bitwarden secret with PIN", exc_info=True)
+            return None
+
+    def clear(self) -> None:
+        self.store.update(
+            {
+                APP_PIN_HASH_KEY: "",
+                APP_PIN_SALT_KEY: "",
+                BW_SECRET_KEY: "",
+            }
+        )
 
 
 class SessionManager:
-    """PBKDF2 app-password authentication with a one-hour Keychain session."""
+    """PBKDF2 app-password authentication with a one-hour session token."""
 
     def __init__(
         self,

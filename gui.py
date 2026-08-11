@@ -2,7 +2,7 @@
 """
 DOWNLOWd — secure employee onboarding appliance GUI.
 
-Startup: Bitwarden master password unlock.
+Startup: PIN unlock (letters and/or numbers) decrypts Bitwarden master password.
 Dashboard: intake → Bitwarden → partner accounts → lockdown.
 Settings: disposal modes, provisioning toggles, collection config.
 """
@@ -53,7 +53,7 @@ from employee_profiles import (
     RECORD_ROLES,
 )
 from hq_template import HQ_TEMPLATE_FIELDS, write_hq_file
-from integrations import BitwardenService, CredentialStore
+from integrations import BitwardenService, CredentialStore, PinAuth
 from onboarding import BitwardenConfig, Onboarding, OnboardingConfig
 from secure_delete import (
     BW_SHRED_MODES,
@@ -448,7 +448,7 @@ def _auth_primary_button(parent: ctk.CTkFrame, text: str, command: Callable[[], 
 
 
 class BitwardenLoginDialog(ctk.CTkToplevel):
-    """Gate the entire app behind Bitwarden CLI login/unlock."""
+    """Gate the app: first-run Bitwarden + PIN setup, then PIN unlock thereafter."""
 
     def __init__(
         self,
@@ -460,9 +460,12 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         super().__init__(parent)
         self.bw_service = bw_service
         self.credential_store = credential_store
+        self.pin_auth = PinAuth(credential_store)
         self.on_success = on_success
         self.audit = get_audit_logger()
         self.success = False
+        self._form: Optional[ctk.CTkFrame] = None
+        self._card: Optional[ctk.CTkFrame] = None
 
         self.title("DOWNLOWd")
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
@@ -482,25 +485,79 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         except tk.TclError:
             pass
 
+    def _clear_form(self) -> None:
+        if self._form is not None:
+            self._form.destroy()
+            self._form = None
+
     def _build_ui(self):
-        card = _auth_shell(self, height=540)
+        height = 520 if self.pin_auth.has_pin() else 640
+        self._card = _auth_shell(self, height=height)
+        if self.pin_auth.has_pin():
+            self._build_pin_unlock()
+        else:
+            self._build_pin_setup()
+
+    def _rebuild(self) -> None:
+        if self._card is not None:
+            self._card.destroy()
+            self._card = None
+        self._build_ui()
+        _present_auth_dialog(self, self.master)
+
+    def _finish_success(self, method: str) -> None:
+        self.audit.log_authentication(True, method=method)
+        self.success = True
+        self.destroy()
+        self.on_success()
+
+    def _bw_login_or_unlock(self, email: str, password: str, status_var: tk.StringVar) -> Dict[str, Any]:
+        try:
+            status = self.bw_service.get_status()
+        except Exception:
+            status = "unauthenticated"
+
+        if status in {"unlocked", "locked"}:
+            ok = self.bw_service.unlock(password)
+            return {"success": ok, "error": None if ok else "Incorrect master password."}
+
+        result = self.bw_service.login(email, password)
+        if result.get("two_factor_required"):
+            code = simpledialog.askstring("Two-Factor", "Enter your 2FA code:", parent=self)
+            if not code:
+                self.bw_service.clear_session()
+                self.audit.log_authentication(False, method="bitwarden_2fa_cancelled")
+                status_var.set("")
+                return {"success": False, "error": "Two-factor cancelled."}
+            result = self.bw_service.login(email, password, code)
+        return result
+
+    def _build_pin_setup(self) -> None:
+        assert self._card is not None
         _auth_brand(
-            card,
-            "Sign in with Bitwarden",
-            "Your vault unlocks the workspace.",
+            self._card,
+            "Create your PIN",
+            "4–8 letters and/or numbers. Bitwarden unlocks once; the PIN opens DOWNLOWd next time.",
         )
-
-        form = ctk.CTkFrame(card, fg_color="transparent", corner_radius=0)
+        form = ctk.CTkFrame(self._card, fg_color="transparent", corner_radius=0)
         form.pack(fill=tk.BOTH, expand=True, padx=28, pady=(0, 28))
+        self._form = form
 
-        _auth_field_label(form, "Email")
+        _auth_field_label(form, "Bitwarden Email")
         email_var = tk.StringVar(value=self.credential_store.get("bw_email", ""))
         _auth_entry(form, textvariable=email_var, placeholder="you@company.com")
 
         _auth_field_label(form, "Master Password")
         password_var = tk.StringVar()
-        password_entry = _auth_entry(form, textvariable=password_var, show="•")
-        password_entry.focus()
+        _auth_entry(form, textvariable=password_var, show="•")
+
+        _auth_field_label(form, "PIN (4–8 letters or numbers)")
+        pin_var = tk.StringVar()
+        pin_entry = _auth_entry(form, textvariable=pin_var, show="•", placeholder="e.g. Ops7")
+
+        _auth_field_label(form, "Confirm PIN")
+        pin2_var = tk.StringVar()
+        pin2_entry = _auth_entry(form, textvariable=pin2_var, show="•")
 
         status_var = tk.StringVar(value="")
         ctk.CTkLabel(
@@ -511,60 +568,135 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
             anchor="w",
         ).pack(fill=tk.X, pady=(0, 4))
 
-        def do_login():
+        def do_setup():
             email = email_var.get().strip()
             password = password_var.get()
-            if not email or not password:
-                messagebox.showerror("Required", "Enter email and master password.", parent=self)
+            pin = pin_var.get()
+            pin2 = pin2_var.get()
+            if pin != pin2:
+                messagebox.showerror("PIN mismatch", "PIN and confirmation do not match.", parent=self)
                 return
-            status_var.set("Signing in…")
+            err = self.pin_auth.validate_pin(pin)
+            if err:
+                messagebox.showerror("Invalid PIN", err, parent=self)
+                return
+            if not email or not password:
+                messagebox.showerror("Required", "Enter Bitwarden email and master password.", parent=self)
+                return
+
+            status_var.set("Signing in to Bitwarden…")
             self.update_idletasks()
-
-            try:
-                status = self.bw_service.get_status()
-            except Exception:
-                status = "unauthenticated"
-
-            result: Dict[str, Any] = {"success": False}
-            if status == "unlocked" or status == "locked":
-                ok = self.bw_service.unlock(password)
-                result = {"success": ok, "error": None if ok else "Incorrect master password."}
-            else:
-                result = self.bw_service.login(email, password)
-                if result.get("two_factor_required"):
-                    code = simpledialog.askstring("Two-Factor", "Enter your 2FA code:", parent=self)
-                    if not code:
-                        self.bw_service.clear_session()
-                        self.audit.log_authentication(False, method="bitwarden_2fa_cancelled")
-                        status_var.set("")
-                        return
-                    result = self.bw_service.login(email, password, code)
-
-            if result.get("success"):
-                self.credential_store.update({"bw_email": email})
-                self.audit.log_authentication(True, method="bitwarden")
-                self.success = True
-                self.destroy()
-                self.on_success()
-            else:
-                self.audit.log_authentication(False, method="bitwarden")
+            result = self._bw_login_or_unlock(email, password, status_var)
+            if not result.get("success"):
+                self.audit.log_authentication(False, method="bitwarden_pin_setup")
                 status_var.set("")
                 messagebox.showerror(
                     "Bitwarden Login Failed",
                     result.get("error") or "Could not sign in.",
                     parent=self,
                 )
+                return
 
-        _auth_primary_button(form, "Unlock with Bitwarden", do_login)
-        password_entry.bind("<Return>", lambda _event: do_login())
+            setup_err = self.pin_auth.setup(email=email, master_password=password, pin=pin)
+            if setup_err:
+                status_var.set("")
+                messagebox.showerror("PIN setup failed", setup_err, parent=self)
+                return
+            self._finish_success("bitwarden_pin_setup")
+
+        _auth_primary_button(form, "Save PIN & Unlock", do_setup)
+        pin2_entry.bind("<Return>", lambda _event: do_setup())
+        pin_entry.focus()
         ctk.CTkLabel(
             form,
-            text="DOWNLOWd is a Bitwarden wrapper — secrets stay in your vault.",
+            text="Your master password is encrypted with the PIN and stored only on this Mac.",
             font=("Helvetica Neue", 11),
             text_color=C["muted"],
             wraplength=300,
             justify="center",
         ).pack(pady=(16, 0))
+
+    def _build_pin_unlock(self) -> None:
+        assert self._card is not None
+        email = self.credential_store.get("bw_email", "") or "your vault"
+        _auth_brand(
+            self._card,
+            "Enter your PIN",
+            f"Unlocks Bitwarden for {email}.",
+        )
+        form = ctk.CTkFrame(self._card, fg_color="transparent", corner_radius=0)
+        form.pack(fill=tk.BOTH, expand=True, padx=28, pady=(0, 28))
+        self._form = form
+
+        _auth_field_label(form, "PIN")
+        pin_var = tk.StringVar()
+        pin_entry = _auth_entry(form, textvariable=pin_var, show="•", placeholder="4–8 letters or numbers")
+
+        status_var = tk.StringVar(value="")
+        ctk.CTkLabel(
+            form,
+            textvariable=status_var,
+            font=("Helvetica Neue", 11),
+            text_color=C["muted"],
+            anchor="w",
+        ).pack(fill=tk.X, pady=(0, 4))
+
+        def do_unlock():
+            pin = pin_var.get()
+            err = self.pin_auth.validate_pin(pin)
+            if err:
+                messagebox.showerror("Invalid PIN", err, parent=self)
+                return
+            master = self.pin_auth.unlock_master_password(pin)
+            if not master:
+                self.audit.log_authentication(False, method="pin")
+                messagebox.showerror("Incorrect PIN", "That PIN did not unlock this workspace.", parent=self)
+                return
+            email_addr = str(self.credential_store.get("bw_email", "") or "").strip()
+            if not email_addr:
+                messagebox.showerror("Missing email", "No Bitwarden email on file. Reset PIN setup.", parent=self)
+                return
+            status_var.set("Unlocking Bitwarden…")
+            self.update_idletasks()
+            result = self._bw_login_or_unlock(email_addr, master, status_var)
+            if result.get("success"):
+                self._finish_success("pin")
+            else:
+                self.audit.log_authentication(False, method="pin_bitwarden")
+                status_var.set("")
+                messagebox.showerror(
+                    "Bitwarden Unlock Failed",
+                    result.get("error") or "Could not unlock the vault.",
+                    parent=self,
+                )
+
+        def reset_pin():
+            if not messagebox.askyesno(
+                "Reset PIN?",
+                "Clear the saved PIN and set up again with your Bitwarden master password?",
+                parent=self,
+            ):
+                return
+            self.pin_auth.clear()
+            self.bw_service.clear_session()
+            self._rebuild()
+
+        _auth_primary_button(form, "Unlock", do_unlock)
+        pin_entry.bind("<Return>", lambda _event: do_unlock())
+        pin_entry.focus()
+        ctk.CTkButton(
+            form,
+            text="Forgot PIN — reset setup",
+            command=reset_pin,
+            height=32,
+            corner_radius=2,
+            border_width=0,
+            fg_color="transparent",
+            hover_color=C["accent_dim"],
+            text_color=C["muted"],
+            font=("Helvetica Neue", 11),
+            cursor="hand2",
+        ).pack(fill=tk.X, pady=(14, 0))
 
 
 class QueueStreamWriter:

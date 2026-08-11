@@ -24,14 +24,17 @@ from employee_profiles import (
     EmployeeProfileStore,
     ProfileSyncService,
 )
-from bw_import_converter import BitwardenConverter
+from bw_import_converter import BitwardenConverter, strip_rtf_to_text
 from data_retention import DataRetentionManager
 from integrations import (
     APP_PASSWORD_HASH_KEY,
+    APP_PIN_HASH_KEY,
     APP_SESSION_CREATED_KEY,
     APP_SESSION_TOKEN_KEY,
+    BW_SECRET_KEY,
     BitwardenService,
     CredentialStore,
+    PinAuth,
     SessionManager,
 )
 from gui import Dashboard
@@ -180,41 +183,44 @@ class AppSessionTests(unittest.TestCase):
 
 
 class CredentialMigrationTests(unittest.TestCase):
-    def test_verified_migration_removes_plaintext_source(self):
+    def test_legacy_file_migrates_into_secure_store_and_is_removed(self):
         with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "credentials.json"
-            source.write_text('{"token": "secret"}', encoding="utf-8")
-            keychain = {}
-
-            def set_password(_service, key, value):
-                keychain[key] = value
-
+            source = Path(directory) / "legacy_credentials.json"
+            dest = Path(directory) / "secure" / "credentials.json"
+            source.write_text('{"bw_email": "ops@example.com", "token": "secret"}', encoding="utf-8")
             with (
                 mock.patch.object(integrations, "CREDENTIALS_FILE", source),
-                mock.patch.object(
-                    integrations.keyring,
-                    "get_password",
-                    side_effect=lambda _service, key: keychain.get(key),
-                ),
-                mock.patch.object(integrations.keyring, "set_password", side_effect=set_password),
+                mock.patch.object(integrations, "SECURE_CREDENTIALS_FILE", dest),
             ):
-                CredentialStore()
-            self.assertEqual(keychain["token"], "secret")
+                store = CredentialStore()
+            self.assertEqual(store.get("bw_email"), "ops@example.com")
+            self.assertEqual(store.get("token"), "secret")
             self.assertFalse(source.exists())
+            self.assertTrue(dest.exists())
+            self.assertEqual(stat.S_IMODE(dest.stat().st_mode), 0o600)
 
-    def test_failed_keychain_verification_keeps_plaintext_source(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "credentials.json"
-            source.write_text('{"token": "secret"}', encoding="utf-8")
-            with (
-                mock.patch.object(integrations, "CREDENTIALS_FILE", source),
-                mock.patch.object(integrations.keyring, "get_password", return_value=None),
-                mock.patch.object(integrations.keyring, "set_password"),
-            ):
-                with self.assertLogs(level="ERROR"):
-                    CredentialStore()
-            self.assertTrue(source.exists())
-            self.assertEqual(source.read_text(encoding="utf-8"), '{"token": "secret"}')
+
+class PinAuthTests(unittest.TestCase):
+    def test_accepts_letters_numbers_or_both(self):
+        self.assertIsNone(PinAuth.validate_pin("Ab12"))
+        self.assertIsNone(PinAuth.validate_pin("ops7"))
+        self.assertIsNone(PinAuth.validate_pin("1234"))
+        self.assertIsNone(PinAuth.validate_pin("AbCdEf12"))
+        self.assertIn("4–8", PinAuth.validate_pin("ab") or "")
+        self.assertIn("letters and numbers", PinAuth.validate_pin("ab!234") or "")
+
+    def test_pin_encrypts_and_unlocks_master_password(self):
+        store = MemoryCredentialStore()
+        auth = PinAuth(store)
+        err = auth.setup(email="ops@example.com", master_password="horse battery", pin="Ops7")
+        self.assertIsNone(err)
+        self.assertTrue(auth.has_pin())
+        self.assertNotEqual(store.get(BW_SECRET_KEY), "horse battery")
+        self.assertNotEqual(store.get(APP_PIN_HASH_KEY), "Ops7")
+        self.assertTrue(auth.verify_pin("Ops7"))
+        self.assertFalse(auth.verify_pin("wrong"))
+        self.assertEqual(auth.unlock_master_password("Ops7"), "horse battery")
+        self.assertIsNone(auth.unlock_master_password("wrong"))
 
 
 class TransactionDatabaseTests(unittest.TestCase):
@@ -573,6 +579,26 @@ class OnboardingTests(unittest.TestCase):
                 "Date of Birth",
                 {field["name"] for field in identity["fields"]},
             )
+
+    def test_rtf_hq_export_strips_controls_and_converts(self):
+        rtf = (
+            r"{\rtf1\ansi\ansicpg1252{\fonttbl\f0\fswiss Helvetica;}"
+            r"\f0\fs24 \cf0 n_id|firstname|lastname|dob|cc|cvv|expmonth|expyear|email"
+            r"\line 99|Ada|Lovelace|12/10/1815|4111111111111111|123|04|2030|ada@example.com}"
+        )
+        plain = strip_rtf_to_text(rtf)
+        self.assertIn("n_id|firstname|lastname", plain)
+        self.assertIn("Ada|Lovelace", plain)
+        self.assertNotIn("\\rtf", plain)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "HQ-882920.rtf"
+            source.write_text(rtf, encoding="utf-8")
+            converter = BitwardenConverter(source, root / "output.json", "password")
+            items, employees = converter._process_input_file()
+            self.assertEqual(len(employees), 1)
+            self.assertEqual(employees[0]["first_name"], "Ada")
+            self.assertEqual(len(items), 3)
 
     def test_failed_import_disposes_generated_json_but_keeps_source(self):
         audit = FakeAudit()

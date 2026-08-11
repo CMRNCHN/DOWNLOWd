@@ -1,14 +1,46 @@
 #!/usr/bin/env python3
 
 import csv
+import io
 import json
 import os
+import re
 import sys
 import uuid
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict
+
+
+_RTF_CONTROL_RE = re.compile(r"\\([a-zA-Z]+)(-?\d*)[ ]?")
+_RTF_HEX_CHAR_RE = re.compile(r"\\'([0-9a-fA-F]{2})")
+
+
+def strip_rtf_to_text(raw: str) -> str:
+    """
+    Best-effort RTF → plain text for TextEdit-style HQ exports.
+
+    Unescapes \\_ \\{ \\} \\\\, drops control words/groups noise, keeps pipe rows.
+    """
+    text = raw.replace("\r\n", "\n").replace("\r", "\n")
+    # RTF line continuation: trailing \<newline> joins soft-wrapped lines.
+    text = re.sub(r"\\\n", "", text)
+    text = text.replace("\\_", "_").replace("\\{", "{").replace("\\}", "}")
+    text = text.replace("\\\\", "\x00")  # preserve literal backslash
+    # Paragraph / soft line breaks become real newlines before controls are dropped.
+    text = re.sub(r"\\(par|line|row)(?![a-zA-Z])\s?", "\n", text)
+    text = _RTF_HEX_CHAR_RE.sub(lambda m: bytes.fromhex(m.group(1)).decode("latin-1"), text)
+    text = _RTF_CONTROL_RE.sub("", text)
+    text = text.replace("{", "").replace("}", "")
+    text = text.replace("\x00", "\\")
+    lines = []
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if not cleaned or "|" not in cleaned:
+            continue
+        lines.append(cleaned)
+    return "\n".join(lines) + ("\n" if lines else "")
 
 # --- Configuration ---
 
@@ -109,8 +141,8 @@ class BitwardenConverter:
     def run(self, delete_input: bool = False, raise_on_error: bool = False) -> Dict[str, Any]:
         """Orchestrates the conversion process. Returns conversion stats."""
         print(f"\n--- Processing file: {self.input_path.name} ---")
-        if self.input_path.suffix.lower() == '.rtf':
-            print("Warning: Treating '.rtf' file as plain text. This may not work if it contains rich text formatting.")
+        if self.input_path.suffix.lower() == ".rtf":
+            print("Note: Stripping RTF markup before HQ parse.")
 
         successful_conversion = False
         employees: List[Dict[str, str]] = []
@@ -157,98 +189,109 @@ class BitwardenConverter:
             "output_path": str(self.output_path),
         }
 
+    def _read_source_text(self) -> str:
+        raw = self.input_path.read_text(encoding="utf-8", errors="replace")
+        if self.input_path.suffix.lower() == ".rtf" or raw.lstrip().startswith("{\\rtf"):
+            return strip_rtf_to_text(raw)
+        return raw
+
     def _process_input_file(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
         """Reads and processes the source CSV, returning Bitwarden items and employee metadata."""
         items: List[Dict[str, Any]] = []
         employees: List[Dict[str, str]] = []
-        with self.input_path.open(mode='r', encoding='utf-8', newline='') as infile:
-            reader = csv.reader(infile, delimiter='|')
-            
-            try:
-                original_header_list = next(reader)
-            except StopIteration:
-                print("Error: Input file is empty.", file=sys.stderr)
-                return [], []
+        source_text = self._read_source_text()
+        if not source_text.strip():
+            print("Error: Input file is empty.", file=sys.stderr)
+            return [], []
 
-            header = [self._normalize_header(h) for h in original_header_list]
+        reader = csv.reader(io.StringIO(source_text), delimiter="|")
+        try:
+            original_header_list = next(reader)
+        except StopIteration:
+            print("Error: Input file is empty.", file=sys.stderr)
+            return [], []
 
-            if not self._validate_schema(header):
-                return [], []
+        header = [self._normalize_header(h) for h in original_header_list]
 
-            header_map = {norm: orig for norm, orig in zip(header, original_header_list)}
+        if not self._validate_schema(header):
+            return [], []
 
-            for i, row in enumerate(reader, start=2):
-                self.stats["rows_read"] += 1
-                if not any(row):
-                    continue
+        header_map = {norm: orig for norm, orig in zip(header, original_header_list)}
 
-                row_data: Dict[str, str] = dict(zip(header, row))
-                self._enrich_row_fallbacks(row_data)
+        for i, row in enumerate(reader, start=2):
+            self.stats["rows_read"] += 1
+            if not any(row):
+                continue
 
-                first_name = row_data.get('firstname', '').strip()
-                last_name = row_data.get('lastname', '').strip()
+            row_data: Dict[str, str] = dict(zip(header, row))
+            self._enrich_row_fallbacks(row_data)
 
-                if not all(row_data.get(col, '').strip() for col in REQUIRED_COLUMNS):
-                    self.stats["skipped_rows"]["Missing required values"].append(i)
-                    continue
-                if not first_name or not last_name:
-                    self.stats["skipped_rows"]["Missing name"].append(i)
-                    continue
-                if not all(row_data.get(col, '').strip() for col in EXPIRY_COLUMNS):
-                    self.stats["skipped_rows"]["Missing card expiry"].append(i)
-                    continue
+            first_name = row_data.get("firstname", "").strip()
+            last_name = row_data.get("lastname", "").strip()
 
-                dob_str, dob_header_key = self._find_dob_value(row_data)
-                if not dob_str or not dob_header_key:
-                    self.stats["skipped_rows"]["Missing required values"].append(i)
-                    continue
+            if not all(row_data.get(col, "").strip() for col in REQUIRED_COLUMNS):
+                self.stats["skipped_rows"]["Missing required values"].append(i)
+                continue
+            if not first_name or not last_name:
+                self.stats["skipped_rows"]["Missing name"].append(i)
+                continue
+            if not all(row_data.get(col, "").strip() for col in EXPIRY_COLUMNS):
+                self.stats["skipped_rows"]["Missing card expiry"].append(i)
+                continue
 
-                birth_year = self._parse_birth_year(dob_str)
-                if not birth_year:
-                    self.stats["skipped_rows"]["Unreadable DOB"].append(i)
-                    continue
+            dob_str, dob_header_key = self._find_dob_value(row_data)
+            if not dob_str or not dob_header_key:
+                self.stats["skipped_rows"]["Missing required values"].append(i)
+                continue
 
-                username = f"{first_name.replace(' ', '')}{last_name.replace(' ', '')}{birth_year}".lower()
-                if username in self.generated_usernames:
-                    self.stats["skipped_rows"]["Duplicate username"].append(i)
-                    continue
-                self.generated_usernames.add(username)
+            birth_year = self._parse_birth_year(dob_str)
+            if not birth_year:
+                self.stats["skipped_rows"]["Unreadable DOB"].append(i)
+                continue
 
-                full_name = " ".join(
-                    part for part in (
-                        first_name,
-                        row_data.get('middlename', '').strip(),
-                        last_name,
-                    ) if part
+            username = f"{first_name.replace(' ', '')}{last_name.replace(' ', '')}{birth_year}".lower()
+            if username in self.generated_usernames:
+                self.stats["skipped_rows"]["Duplicate username"].append(i)
+                continue
+            self.generated_usernames.add(username)
+
+            full_name = " ".join(
+                part
+                for part in (
+                    first_name,
+                    row_data.get("middlename", "").strip(),
+                    last_name,
                 )
+                if part
+            )
 
-                employee_id = str(uuid.uuid4())
-                login_item = self._generate_login_item(full_name, username, employee_id)
-                identity_item = self._generate_identity_item(
-                    full_name,
-                    row_data,
-                    header_map,
-                    dob_str,
-                    dob_header_key,
-                    employee_id,
-                )
-                card_item = self._generate_card_item(
-                    full_name,
-                    row_data,
-                    header_map,
-                    employee_id,
-                )
-                
-                items.extend([login_item, identity_item, card_item])
-                self.stats["items_generated"] += 3
-                employees.append({
+            employee_id = str(uuid.uuid4())
+            login_item = self._generate_login_item(full_name, username, employee_id)
+            identity_item = self._generate_identity_item(
+                full_name,
+                row_data,
+                header_map,
+                dob_str,
+                dob_header_key,
+                employee_id,
+            )
+            card_item = self._generate_card_item(
+                full_name,
+                row_data,
+                header_map,
+                employee_id,
+            )
+
+            items.extend([login_item, identity_item, card_item])
+            self.stats["items_generated"] += 3
+            employees.append(
+                {
                     "full_name": full_name,
                     "username": username,
                     "first_name": first_name,
                     "last_name": last_name,
                     "email": f"{username}@outlook.com",
                     "employee_id": employee_id,
-                    # Assist/signup aliases (Marriott postal/country when HQ provides them).
                     "postal": (
                         row_data.get("postalcode")
                         or row_data.get("zip")
@@ -261,13 +304,18 @@ class BitwardenConverter:
                         or "USA"
                     ).strip()
                     or "USA",
-                })
+                }
+            )
 
         return items, employees
 
     def _normalize_header(self, header: str) -> str:
         """Lowercase, strip whitespace, and remove spaces for consistent matching."""
-        return header.strip().lower().replace(' ', '')
+        normalized = header.strip().lower().replace(" ", "")
+        # TextEdit RTF round-trips sometimes corrupt leading "_" on `_id`.
+        if normalized in {"nid", "id"}:
+            return "_id"
+        return normalized
 
     def _validate_schema(self, header: List[str]) -> bool:
         """Checks if all required columns are present in the header."""
