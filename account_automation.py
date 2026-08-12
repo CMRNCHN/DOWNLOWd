@@ -486,7 +486,7 @@ class AccountCreator:
         message: Optional[str] = None,
     ) -> Dict[str, Any]:
         data, payload, copied = self._prepare_payload(service, personal_data, account_name)
-        launched = open_ops_browser(signup_url, setup_if_needed=False)
+        launched = open_ops_browser(signup_url, setup_if_needed=True)
         if not launched.get("ok"):
             try:
                 webbrowser.open(signup_url)
