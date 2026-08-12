@@ -334,9 +334,12 @@ class AccountCreator:
         options.add_argument("--disable-sync")
         load_arg = ops.load_extension_arg()
         if load_arg:
+            # Harmless on Chromium / older Chrome; branded 137+ ignores it but
+            # BiDi registration already persists extensions into this profile.
             options.add_argument(load_arg)
             options.add_argument(
-                "--disable-extensions-except=" + load_arg.split("=", 1)[1]
+                "--disable-features=DisableLoadExtensionCommandLineSwitch,"
+                "ChromeWhatsNewUI,PasswordManagerOnboarding"
             )
         chrome_bin = find_chrome_binary()
         if chrome_bin:

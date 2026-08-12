@@ -1604,8 +1604,8 @@ class Dashboard(ttk.Frame):
                 form,
                 text=(
                     "Isolated browser for employee signups. Auto-installs Bitwarden, "
-                    "uBlock, fingerprint defenders, and related privacy tools. Keep it "
-                    "signed out of personal Google."
+                    "uBlock Origin Lite, fingerprint defenders, and related privacy tools "
+                    "(close Chrome first). Keep it signed out of personal Google."
                 ),
                 font=F_CAPTION,
                 text_color=C["status"],

@@ -829,7 +829,7 @@ class AssistHelpersTests(unittest.TestCase):
             self.assertEqual(prefs["webrtc"]["ip_handling_policy"], "disable_non_proxied_udp")
             html = profile.setup_page.read_text(encoding="utf-8")
             self.assertIn("Bitwarden", html)
-            self.assertIn("uBlock Origin", html)
+            self.assertIn("uBlock Origin Lite", html)
             self.assertIn("Canvas Fingerprint Defender", html)
             self.assertIn("WebRTC Control", html)
             for ext in RECOMMENDED_EXTENSIONS:
@@ -842,6 +842,7 @@ class AssistHelpersTests(unittest.TestCase):
 
         from chrome_ops_profile import (
             ChromeOpsProfile,
+            RECOMMENDED_EXTENSIONS,
             extract_crx_payload,
             unpack_crx,
         )
@@ -869,25 +870,27 @@ class AssistHelpersTests(unittest.TestCase):
             unpack_crx(crx_path, dest)
             self.assertTrue((dest / "manifest.json").exists())
 
-            # Seed one recommended id so load_extension_arg picks it up.
-            from chrome_ops_profile import RECOMMENDED_EXTENSIONS
-
-            ext_id = RECOMMENDED_EXTENSIONS[0]["id"]
+            # Seed one auto-install id so load_extension_arg picks it up.
+            ext_id = next(ext["id"] for ext in RECOMMENDED_EXTENSIONS if ext.get("auto_install", True))
             profile = ChromeOpsProfile(
                 Path(directory) / "ops",
                 extensions_root=Path(directory) / "exts",
             )
             installed = Path(directory) / "exts" / ext_id
             installed.mkdir(parents=True)
-            (installed / "manifest.json").write_text('{"name":"x","version":"1","manifest_version":3}', encoding="utf-8")
+            (installed / "manifest.json").write_text(
+                '{"name":"x","version":"1","manifest_version":3}',
+                encoding="utf-8",
+            )
             arg = profile.load_extension_arg()
             self.assertIsNotNone(arg)
             self.assertTrue(arg.startswith("--load-extension="))
             self.assertIn(str(installed), arg)
             args = profile.launch_args("https://example.com", install_extensions=False)
             self.assertTrue(any(a.startswith("--load-extension=") for a in args))
-            self.assertTrue(any(a.startswith("--disable-extensions-except=") for a in args))
-
+            self.assertTrue(
+                any("DisableLoadExtensionCommandLineSwitch" in a for a in args)
+            )
 
 class BitwardenItemApiTests(unittest.TestCase):
     def test_create_item_encodes_payload_without_writing_it_to_disk(self):

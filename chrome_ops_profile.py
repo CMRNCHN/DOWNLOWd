@@ -2,7 +2,8 @@
 
 Keeps employee signup browsing out of the operator's personal Chrome profile,
 disables Chrome password/autofill (Bitwarden owns secrets), downloads privacy /
-fingerprinting extensions into a local desk, and loads them via --load-extension.
+fingerprinting extensions, and registers MV3 extensions into the ops profile
+via Selenium BiDi (Chrome 137+ no longer honors --load-extension on branded builds).
 """
 
 from __future__ import annotations
@@ -23,69 +24,74 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 PROFILE_ROOT = Path.home() / ".downlowd" / "chrome-ops-profile"
 EXTENSIONS_ROOT = Path.home() / ".downlowd" / "chrome-ops-extensions"
+BROWSERS_ROOT = Path.home() / ".downlowd" / "browsers"
 SETUP_PAGE_NAME = "downlowd-ops-setup.html"
 
 # Chrome Web Store IDs — account creation + identity / fingerprint protection.
-RECOMMENDED_EXTENSIONS: Tuple[Dict[str, str], ...] = (
+# auto_install=False keeps a store link for MV2-only / unavailable packages.
+RECOMMENDED_EXTENSIONS: Tuple[Dict[str, Any], ...] = (
     {
         "id": "nngceckbapebfimnlniiiahkandclblb",
         "name": "Bitwarden",
         "why": "Autofill the temporary DOWNLOWd signup profiles (and nothing else).",
         "category": "account_creation",
+        "auto_install": True,
     },
     {
-        "id": "cjpalhdlnbpafiamejdnhcphjbkeiagm",
-        "name": "uBlock Origin",
-        "why": "Block trackers/ads on signup pages so less of the session leaks out.",
+        "id": "ddkjiahejlhfcafbddmgiahcphecmpfh",
+        "name": "uBlock Origin Lite",
+        "why": "MV3 blocker for trackers/ads on signup pages (classic uBlock is MV2-only now).",
         "category": "identity_protection",
+        "auto_install": True,
     },
     {
         "id": "lckanjgmijmafbedllaakclkaicjfmnk",
         "name": "ClearURLs",
-        "why": "Strip tracking parameters from links before they hitch a ride on signup URLs.",
+        "why": "Strip tracking parameters from links (MV2 — install from the store if Chrome still allows it).",
         "category": "identity_protection",
+        "auto_install": False,
     },
     {
         "id": "gnoaanpbfnjakaddkecnnamnfkebhgle",
         "name": "Cookie Guardian",
         "why": "Auto-delete cookies when tabs close so employee signup sessions do not linger.",
         "category": "identity_protection",
+        "auto_install": True,
     },
     {
         "id": "ldpochfccmkkmhdbclfhpagapcfdljkj",
         "name": "Decentraleyes",
         "why": "Serve common CDN scripts locally so fewer third parties see signup traffic.",
         "category": "identity_protection",
+        "auto_install": True,
     },
     {
         "id": "fihnjjcciajhdojfnbdddfaoknhalnja",
         "name": "I don't care about cookies",
         "why": "Dismiss cookie walls so signup forms stay usable without extra tracking consent clicks.",
         "category": "identity_protection",
+        "auto_install": True,
     },
     {
         "id": "lanfdkkpgfjfdikkncbnojekcppdebfp",
         "name": "Canvas Fingerprint Defender",
         "why": "Noise canvas reads so sites cannot sticky-ID this ops browser via canvas fingerprinting.",
         "category": "fingerprinting",
+        "auto_install": True,
     },
     {
         "id": "fjkmabmdepjfammlpliljpnbhleegehm",
         "name": "WebRTC Control",
         "why": "Block WebRTC IP leaks that can reveal the real network behind a VPN/proxy.",
         "category": "fingerprinting",
-    },
-    {
-        "id": "hkgfoiooedgoejojocmhlaklaeopbecg",
-        "name": "WebRTC Network Limiter",
-        "why": "Chrome's own WebRTC IP-handling control — keep non-proxied UDP addresses private.",
-        "category": "fingerprinting",
+        "auto_install": True,
     },
     {
         "id": "bhchdcejhohfmigjafbampogmaanbfkg",
         "name": "User-Agent Switcher and Manager",
         "why": "Optional UA spoofing when a signup site keys too hard on browser/platform strings.",
         "category": "fingerprinting",
+        "auto_install": True,
     },
 )
 
@@ -105,6 +111,10 @@ def find_chrome_binary() -> Optional[str]:
     env = os.environ.get("DOWNLOWD_CHROME_BIN") or os.environ.get("CHROME_BIN")
     if env and Path(env).exists():
         return env
+
+    # Chrome for Testing is optional and only used when DOWNLOWD_CHROME_BIN points at it.
+    # Branded Chrome still loads extensions already registered into this profile.
+
     candidates = []
     if sys.platform == "darwin":
         candidates.append(
@@ -141,6 +151,23 @@ def find_chrome_binary() -> Optional[str]:
         if found:
             return found
     return None
+
+
+def find_chromedriver() -> Optional[str]:
+    env = os.environ.get("DOWNLOWD_CHROMEDRIVER") or os.environ.get("CHROMEDRIVER")
+    if env and Path(env).exists():
+        return env
+    marker = BROWSERS_ROOT / "chromedriver-bin"
+    if marker.exists():
+        path = marker.read_text(encoding="utf-8").strip()
+        if path and Path(path).exists():
+            return path
+    for candidate in BROWSERS_ROOT.glob("chromedriver*/**/chromedriver"):
+        if candidate.is_file():
+            return str(candidate)
+    from shutil import which
+
+    return which("chromedriver")
 
 
 def store_url(extension_id: str) -> str:
@@ -247,9 +274,23 @@ def extension_install_dir(extension_id: str, *, root: Optional[Path] = None) -> 
     return base / extension_id
 
 
-def is_extension_installed(extension_id: str, *, root: Optional[Path] = None) -> bool:
+def is_extension_unpacked(extension_id: str, *, root: Optional[Path] = None) -> bool:
     path = extension_install_dir(extension_id, root=root)
     return path.is_dir() and (path / "manifest.json").is_file()
+
+
+def extension_manifest_version(extension_id: str, *, root: Optional[Path] = None) -> Optional[int]:
+    path = extension_install_dir(extension_id, root=root) / "manifest.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    try:
+        return int(data.get("manifest_version"))
+    except (TypeError, ValueError):
+        return None
 
 
 class ChromeOpsProfile:
@@ -305,7 +346,6 @@ class ChromeOpsProfile:
         profile = prefs.setdefault("profile", {})
         profile["name"] = "DOWNLOWd Ops"
         profile["password_manager_enabled"] = False
-        # Discourage signing this profile into a personal Google account.
         profile["exit_type"] = "Normal"
 
         prefs["credentials_enable_service"] = False
@@ -320,7 +360,6 @@ class ChromeOpsProfile:
         session = prefs.setdefault("session", {})
         session["restore_on_startup"] = 5  # Open New Tab Page
 
-        # Prefer IPv4 / avoid leaking local interfaces via WebRTC when possible.
         webrtc = prefs.setdefault("webrtc", {})
         webrtc["ip_handling_policy"] = "disable_non_proxied_udp"
 
@@ -331,17 +370,34 @@ class ChromeOpsProfile:
     def installed_extension_paths(self) -> List[Path]:
         paths: List[Path] = []
         for ext in RECOMMENDED_EXTENSIONS:
+            if not ext.get("auto_install", True):
+                continue
             path = extension_install_dir(ext["id"], root=self.extensions_root)
             if path.is_dir() and (path / "manifest.json").is_file():
                 paths.append(path)
         return paths
 
-    def install_extensions(self, *, force: bool = False) -> Dict[str, Any]:
-        """
-        Download + unpack recommended CRXs into the local extensions desk.
+    def profile_has_registered_extensions(self) -> bool:
+        """True when Preferences already lists unpacked ops extensions."""
+        path = self._prefs_path()
+        if not path.exists():
+            return False
+        try:
+            prefs = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        settings = (prefs.get("extensions") or {}).get("settings") or {}
+        roots = {str(p) for p in self.installed_extension_paths()}
+        for value in settings.values():
+            if not isinstance(value, dict):
+                continue
+            ext_path = str(value.get("path") or "")
+            if ext_path in roots:
+                return True
+        return False
 
-        Returns a status dict with per-extension ok/error and the load paths.
-        """
+    def download_extensions(self, *, force: bool = False) -> Dict[str, Any]:
+        """Download + unpack CRXs into the local extensions desk (no Chrome launch)."""
         self.extensions_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         results: List[Dict[str, Any]] = []
         for ext in RECOMMENDED_EXTENSIONS:
@@ -350,42 +406,230 @@ class ChromeOpsProfile:
                 "id": ext["id"],
                 "name": ext["name"],
                 "path": str(dest),
+                "auto_install": bool(ext.get("auto_install", True)),
             }
-            if not force and is_extension_installed(ext["id"], root=self.extensions_root):
+            if not ext.get("auto_install", True):
                 entry["ok"] = True
-                entry["detail"] = "already installed"
+                entry["detail"] = "store-only (not auto-installed)"
+                results.append(entry)
+                continue
+            if not force and is_extension_unpacked(ext["id"], root=self.extensions_root):
+                entry["ok"] = True
+                entry["detail"] = "already downloaded"
+                entry["manifest_version"] = extension_manifest_version(
+                    ext["id"], root=self.extensions_root
+                )
                 results.append(entry)
                 continue
             crx_path = self.extensions_root / f"{ext['id']}.crx"
             try:
                 download_extension_crx(ext["id"], crx_path)
                 unpack_crx(crx_path, dest)
+                mv = extension_manifest_version(ext["id"], root=self.extensions_root)
                 entry["ok"] = True
-                entry["detail"] = "installed"
-            except Exception as exc:  # noqa: BLE001 — collect per-ext failures
-                logging.warning("Failed to install %s (%s): %s", ext["name"], ext["id"], exc)
+                entry["detail"] = "downloaded"
+                entry["manifest_version"] = mv
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("Failed to download %s (%s): %s", ext["name"], ext["id"], exc)
                 entry["ok"] = False
                 entry["detail"] = str(exc)
             results.append(entry)
+        return {
+            "ok": all(r.get("ok") for r in results if r.get("auto_install")),
+            "detail": "Downloaded ops extension packages",
+            "extensions": results,
+        }
 
-        installed = [r for r in results if r.get("ok")]
-        failed = [r for r in results if not r.get("ok")]
+    def _register_extensions_via_bidi(self, paths: Sequence[Path]) -> Dict[str, Any]:
+        """
+        Register unpacked MV3 extensions into this profile using Selenium BiDi.
+
+        Chrome 137+ branded builds ignore --load-extension; BiDi webExtension.install
+        persists unpacked extensions into the profile Preferences.
+        """
+        if not paths:
+            return {"ok": True, "detail": "No extensions to register", "installs": []}
+
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+            from selenium.webdriver.chrome.service import Service
+        except ImportError as exc:
+            return {
+                "ok": False,
+                "detail": f"Selenium not available for BiDi install ({exc})",
+                "installs": [],
+            }
+
+        chrome = find_chrome_binary()
+        cft_linux = BROWSERS_ROOT / "chrome-for-testing" / "chrome-linux64" / "chrome"
+        if cft_linux.exists():
+            chrome = str(cft_linux)
+        if not chrome:
+            return {"ok": False, "detail": "Chrome not found", "installs": []}
+
+        options = Options()
+        options.binary_location = chrome
+        options.add_argument(f"--user-data-dir={self.root}")
+        options.add_argument("--profile-directory=Default")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-sync")
+        options.add_argument("--enable-unsafe-extension-debugging")
+        options.add_argument("--remote-allow-origins=*")
+        options.add_argument("--disable-features=ChromeWhatsNewUI,PasswordManagerOnboarding")
+        options.set_capability("webSocketUrl", True)
+        for attr, value in (("enable_bidi", True), ("enable_webextensions", True)):
+            if hasattr(options, attr):
+                try:
+                    setattr(options, attr, value)
+                except Exception:
+                    pass
+
+        driver_path = find_chromedriver()
+        service = Service(executable_path=driver_path) if driver_path else None
+
+        installs: List[Dict[str, Any]] = []
+        driver = None
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            from concurrent.futures import TimeoutError as FuturesTimeout
+
+            def _launch():
+                if service is not None:
+                    return webdriver.Chrome(service=service, options=options)
+                return webdriver.Chrome(options=options)
+
+            # Profile locks / Selenium Manager can hang indefinitely otherwise.
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_launch)
+                try:
+                    driver = future.result(timeout=45)
+                except FuturesTimeout as exc:
+                    future.cancel()
+                    return {
+                        "ok": False,
+                        "detail": (
+                            "BiDi Chrome launch timed out after 45s — close Ops Chrome "
+                            "and retry Install / refresh extensions."
+                        ),
+                        "installs": installs,
+                    }
+
+            for path in paths:
+                entry: Dict[str, Any] = {"path": str(path), "name": path.name}
+                try:
+                    if hasattr(driver, "webextension"):
+                        result = driver.webextension.install(str(path))
+                    else:
+                        from selenium.webdriver.common.bidi.webextension import WebExtension
+
+                        result = WebExtension(driver).install(path=str(path))
+                    entry["ok"] = True
+                    entry["result"] = result if isinstance(result, (str, dict)) else repr(result)
+                except Exception as exc:  # noqa: BLE001
+                    entry["ok"] = False
+                    entry["detail"] = str(exc)
+                installs.append(entry)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "detail": f"BiDi Chrome launch failed: {exc}",
+                "installs": installs,
+            }
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+        ok = all(item.get("ok") for item in installs) if installs else False
+        return {
+            "ok": ok,
+            "detail": (
+                f"Registered {sum(1 for i in installs if i.get('ok'))}/{len(installs)} "
+                "extensions into ops profile via BiDi"
+            ),
+            "installs": installs,
+        }
+
+    def install_extensions(self, *, force: bool = False) -> Dict[str, Any]:
+        """
+        Download recommended CRXs and register MV3 ones into the ops Chrome profile.
+
+        Returns a status dict with per-extension ok/error and load paths.
+        """
+        downloaded = self.download_extensions(force=force)
+        results = list(downloaded.get("extensions") or [])
+
+        need_register = force or not self.profile_has_registered_extensions()
+        register_paths: List[Path] = []
+        if need_register:
+            for ext in RECOMMENDED_EXTENSIONS:
+                if not ext.get("auto_install", True):
+                    continue
+                path = extension_install_dir(ext["id"], root=self.extensions_root)
+                if not (path / "manifest.json").exists():
+                    continue
+                mv = extension_manifest_version(ext["id"], root=self.extensions_root)
+                if mv == 2:
+                    for row in results:
+                        if row.get("id") == ext["id"]:
+                            row["detail"] = "MV2 — skipped BiDi register; use Chrome Web Store"
+                    continue
+                register_paths.append(path)
+
+        bidi: Dict[str, Any] = {"ok": True, "detail": "already registered", "installs": []}
+        if register_paths:
+            # Chrome must not already have this profile open.
+            bidi = self._register_extensions_via_bidi(register_paths)
+            by_path = {str(Path(i.get("path"))): i for i in bidi.get("installs") or []}
+            for row in results:
+                if not row.get("auto_install"):
+                    continue
+                info = by_path.get(row.get("path"))
+                if not info:
+                    continue
+                if info.get("ok"):
+                    row["registered"] = True
+                    row["detail"] = "registered in ops profile"
+                else:
+                    row["registered"] = False
+                    row["detail"] = info.get("detail") or "BiDi register failed"
+
+        installed_ok = [
+            r for r in results if r.get("auto_install") and r.get("ok") and r.get("registered", True)
+        ]
+        failed = [
+            r
+            for r in results
+            if r.get("auto_install")
+            and (not r.get("ok") or r.get("registered") is False)
+        ]
         summary = (
-            f"Installed {len(installed)}/{len(results)} ops extensions"
+            f"Ops extensions ready: {len(installed_ok)} auto / "
+            f"{sum(1 for r in results if not r.get('auto_install'))} store-only"
             + (f" ({len(failed)} failed)" if failed else "")
         )
-        # Refresh desk HTML so status badges stay current.
         try:
             self.root.mkdir(parents=True, exist_ok=True)
             self._write_setup_page(install_results=results)
         except OSError:
             pass
+
+        marker = self.root / ".extensions_registered"
+        if bidi.get("ok") or self.profile_has_registered_extensions():
+            marker.write_text("1\n", encoding="utf-8")
+
         return {
-            "ok": len(failed) == 0,
+            "ok": len(failed) == 0 and bool(downloaded.get("ok")),
             "detail": summary,
             "extensions": results,
-            "load_paths": [r["path"] for r in installed],
+            "bidi": bidi,
+            "load_paths": [str(p) for p in self.installed_extension_paths()],
             "extensions_root": str(self.extensions_root),
+            "registered": self.profile_has_registered_extensions(),
         }
 
     def _write_setup_page(self, install_results: Optional[Sequence[Dict[str, Any]]] = None) -> None:
@@ -393,19 +637,30 @@ class ChromeOpsProfile:
         if install_results:
             for row in install_results:
                 status_by_id[str(row.get("id"))] = row
+        registered = self.profile_has_registered_extensions()
         rows = []
         for ext in RECOMMENDED_EXTENSIONS:
             badge = _CATEGORY_LABELS.get(ext["category"], ext["category"])
-            local = is_extension_installed(ext["id"], root=self.extensions_root)
+            local = is_extension_unpacked(ext["id"], root=self.extensions_root)
             status = status_by_id.get(ext["id"])
-            if status and not status.get("ok"):
+            auto = bool(ext.get("auto_install", True))
+            if not auto:
+                state = "Store install only (MV2 / not auto-registered)"
+                state_class = "muted"
+            elif status and status.get("registered") is False:
+                state = f"Download ok — register failed ({status.get('detail', 'error')})"
+                state_class = "warn"
+            elif status and not status.get("ok"):
                 state = f"Auto-install failed — use store link ({status.get('detail', 'error')})"
                 state_class = "warn"
-            elif local:
-                state = "Installed locally — loads with Ops Chrome"
+            elif registered and local:
+                state = "Installed in Ops Chrome profile"
                 state_class = "ok"
+            elif local:
+                state = "Downloaded — click Install / refresh extensions in Settings to register"
+                state_class = "muted"
             else:
-                state = "Not installed yet — click Install extensions in Settings"
+                state = "Not installed yet — click Install / refresh extensions in Settings"
                 state_class = "muted"
             rows.append(
                 f"""
@@ -475,9 +730,10 @@ class ChromeOpsProfile:
     <h1>DOWNLOWd Ops Chrome</h1>
     <p class="lede">
       This browser profile is only for partner account creation.
-      Keep it signed out of your personal Google account. DOWNLOWd auto-downloads
-      uBlock, fingerprint defenders, and Bitwarden into a local extensions desk
-      and loads them when Ops Chrome starts.
+      Keep it signed out of your personal Google account. DOWNLOWd downloads
+      uBlock Origin Lite, fingerprint defenders, and Bitwarden, then registers
+      them into this profile (Chrome 137+ no longer loads unpacked extensions
+      from the command line on branded builds).
     </p>
     <div class="grid">
       {''.join(rows)}
@@ -487,8 +743,9 @@ class ChromeOpsProfile:
       <ul>
         <li>Do not sync a personal Google account here.</li>
         <li>Chrome password manager and autofill stay off — Bitwarden owns secrets.</li>
-        <li>uBlock + ClearURLs + Decentraleyes cut tracker noise on signup pages.</li>
+        <li>uBlock Origin Lite + Decentraleyes cut tracker noise on signup pages.</li>
         <li>Canvas / WebRTC defenders reduce sticky browser fingerprints.</li>
+        <li>Close Chrome before Settings → Install / refresh extensions.</li>
         <li>After each employee, close extra tabs; DOWNLOWd can also reset site data.</li>
       </ul>
     </div>
@@ -511,6 +768,7 @@ class ChromeOpsProfile:
         (self.root / ".extensions_setup_opened").write_text("1\n", encoding="utf-8")
 
     def load_extension_arg(self) -> Optional[str]:
+        """Legacy flag for Chromium / older Chrome; branded 137+ ignores it."""
         paths = self.installed_extension_paths()
         if not paths:
             return None
@@ -534,13 +792,12 @@ class ChromeOpsProfile:
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-sync",
-            "--disable-features=ChromeWhatsNewUI,PasswordManagerOnboarding",
+            # Keep the old switch re-enabled on Chrome 137–141; ignored later.
+            "--disable-features=DisableLoadExtensionCommandLineSwitch,ChromeWhatsNewUI,PasswordManagerOnboarding",
         ]
         load_arg = self.load_extension_arg()
         if load_arg:
             args.append(load_arg)
-            # Chromium otherwise disables --load-extension under some enterprise policies.
-            args.append("--disable-extensions-except=" + load_arg.split("=", 1)[1])
         if new_window:
             args.append("--new-window")
         if extra_args:
@@ -565,6 +822,7 @@ class ChromeOpsProfile:
                 "detail": f"Opened ops Chrome ({len(open_list)} tab(s)).",
                 "profile": str(self.root),
                 "args": args,
+                "extensions_registered": self.profile_has_registered_extensions(),
             }
         except OSError as exc:
             return {"ok": False, "detail": str(exc)}
