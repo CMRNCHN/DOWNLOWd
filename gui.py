@@ -1267,7 +1267,6 @@ class Dashboard(ttk.Frame):
             corner_radius=0,
         )
         self.profile_viewer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 14))
-        self._set_profile_panel_populated(False)
 
         actions_card = _ui_panel(right)
         actions_card.grid(row=1, column=0, sticky="ew")
@@ -1286,6 +1285,7 @@ class Dashboard(ttk.Frame):
             font=F_CAPTION,
             text_color=C["status"],
         ).pack(side=tk.RIGHT)
+        self._set_profile_panel_populated(False)
 
         action_row = ctk.CTkFrame(actions_card, fg_color="transparent")
         action_row.pack(fill=tk.X, padx=12, pady=(0, 8))
@@ -1653,27 +1653,30 @@ class Dashboard(ttk.Frame):
 
     def _set_profile_panel_populated(self, populated: bool) -> None:
         """Show employee chrome only after someone is selected from the list."""
-        if not hasattr(self, "_profile_top"):
+        if not hasattr(self, "_profile_top") or not hasattr(self, "profile_viewer"):
             return
-        if populated:
-            if not self._profile_top.winfo_manager():
-                self._profile_top.pack(fill=tk.X, padx=18, pady=(16, 4), before=self.profile_viewer)
-            if not self._profile_subtitle_label.winfo_manager():
-                self._profile_subtitle_label.pack(
-                    fill=tk.X, padx=18, pady=(0, 10), before=self.profile_viewer
-                )
-            if not self._role_rail.winfo_manager():
-                self._role_rail.pack(fill=tk.X, padx=14, pady=(0, 8), before=self.profile_viewer)
-            return
-        for widget in (self._profile_top, self._profile_subtitle_label, self._role_rail):
+        for widget in (
+            self._profile_top,
+            self._profile_subtitle_label,
+            self._role_rail,
+            self.profile_viewer,
+        ):
             try:
                 widget.pack_forget()
             except tk.TclError:
                 pass
-        self.profile_title.set("")
-        self.profile_subtitle.set("")
-        self.actions_hint.set("")
-        self._render_profile_viewer(blank=True)
+        if populated:
+            self._profile_top.pack(fill=tk.X, padx=18, pady=(16, 4))
+            self._profile_subtitle_label.pack(fill=tk.X, padx=18, pady=(0, 10))
+            self._role_rail.pack(fill=tk.X, padx=14, pady=(0, 8))
+        else:
+            self.profile_title.set("")
+            self.profile_subtitle.set("")
+            if hasattr(self, "actions_hint"):
+                self.actions_hint.set("")
+        self.profile_viewer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 14))
+        if not populated:
+            self._render_profile_viewer(blank=True)
 
     def _select_employee_profile(self, employee_id: str) -> None:
         """Load the selected employee profile into the main window."""
