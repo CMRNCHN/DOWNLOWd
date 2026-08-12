@@ -13,6 +13,8 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Any, Dict, List, Optional, Tuple
 
+from chrome_ops_profile import ChromeOpsProfile, find_chrome_binary, open_ops_browser
+
 try:
     from selenium import webdriver
     from selenium.common.exceptions import NoSuchElementException, WebDriverException
@@ -319,12 +321,19 @@ class AccountCreator:
             options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
-        options.add_argument("--incognito")
         options.add_argument("--window-size=1280,900")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        if sys.platform == "darwin" and os.path.exists(chrome_bin):
+        # Dedicated ops profile (extensions + no personal Google sync).
+        # Skip --incognito so Bitwarden / privacy extensions from this profile load.
+        ops = ChromeOpsProfile()
+        ops.ensure()
+        options.add_argument(f"--user-data-dir={ops.root}")
+        options.add_argument("--profile-directory=Default")
+        options.add_argument("--no-first-run")
+        options.add_argument("--disable-sync")
+        chrome_bin = find_chrome_binary()
+        if chrome_bin:
             options.binary_location = chrome_bin
         return options
 
@@ -477,20 +486,26 @@ class AccountCreator:
         message: Optional[str] = None,
     ) -> Dict[str, Any]:
         data, payload, copied = self._prepare_payload(service, personal_data, account_name)
-        try:
-            webbrowser.open(signup_url)
-        except Exception as e:
-            return {
-                "service": service,
-                "status": "error",
-                "error": str(e),
-                "url": signup_url,
-                "account_name": account_name,
-                "personal_data": data,
-                "payload": payload,
-                "filled_fields": [],
-                "clipboard_prepared": copied,
-            }
+        launched = open_ops_browser(signup_url, setup_if_needed=False)
+        if not launched.get("ok"):
+            try:
+                webbrowser.open(signup_url)
+                launched = {
+                    "ok": True,
+                    "detail": f"Ops Chrome unavailable ({launched.get('detail')}); used default browser.",
+                }
+            except Exception as e:
+                return {
+                    "service": service,
+                    "status": "error",
+                    "error": str(e),
+                    "url": signup_url,
+                    "account_name": account_name,
+                    "personal_data": data,
+                    "payload": payload,
+                    "filled_fields": [],
+                    "clipboard_prepared": copied,
+                }
         return {
             "service": service,
             "status": status,
@@ -501,10 +516,12 @@ class AccountCreator:
             "filled_fields": [],
             "clipboard_prepared": copied,
             "assist_fields": list(ASSIST_FIELD_KEYS),
+            "ops_chrome": launched,
             "message": message
             or (
-                "Opened signup in the system browser. Use the assist panel "
-                "(⌘1–⌘6) to paste fields. Complete captcha and submit yourself."
+                "Opened signup in the DOWNLOWd Ops Chrome profile. "
+                "Use Bitwarden Auto-fill on the TEMP item, or Paste from the companion. "
+                "Complete captcha and submit yourself."
             ),
         }
 
@@ -528,7 +545,7 @@ class AccountCreator:
                 if not _SELENIUM_AVAILABLE
                 else "no chromedriver / Selenium disabled"
             )
-            logging.info("%s: %s; using system browser handoff", service, reason)
+            logging.info("%s: %s; using Ops Chrome handoff", service, reason)
             return self._handoff(
                 service,
                 signup_url,
@@ -536,7 +553,7 @@ class AccountCreator:
                 account_name,
                 status="manual_only",
                 message=(
-                    f"{reason}. System browser opened; use the assist panel "
+                    f"{reason}. Ops Chrome opened; use Bitwarden Auto-fill or the assist companion "
                     "(⌘1–⌘6) to paste fields."
                 ),
             )
@@ -559,7 +576,7 @@ class AccountCreator:
                     account_name,
                     status="bot_blocked",
                     message=(
-                        "Signup page blocked automated Chrome. Opened system browser; "
+                        "Signup page blocked automated Chrome. Opened Ops Chrome; "
                         "use the assist panel (⌘1–⌘6) to paste fields."
                     ),
                 )
@@ -579,7 +596,7 @@ class AccountCreator:
                     status="bot_blocked",
                     message=(
                         "No fillable form found (likely bot protection). "
-                        "System browser opened; use the assist panel."
+                        "Ops Chrome opened; use Bitwarden Auto-fill or Paste."
                     ),
                 )
 
@@ -598,7 +615,7 @@ class AccountCreator:
                     account_name,
                     status="manual_only",
                     message=(
-                        "Could not autofill any fields. System browser opened; "
+                        "Could not autofill any fields. Ops Chrome opened; "
                         "use the assist panel (⌘1–⌘6)."
                     ),
                 )
@@ -630,7 +647,7 @@ class AccountCreator:
                 data,
                 account_name,
                 status="manual_only",
-                message=f"Chrome automation failed ({e}). System browser opened; use assist panel.",
+                message=f"Chrome automation failed ({e}). Ops Chrome opened; use assist panel.",
             )
 
     def create_outlook_account(self, personal_data: Dict[str, str], account_name: str) -> Dict[str, Any]:

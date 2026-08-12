@@ -1583,7 +1583,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 form,
                 text=(
-                    "Assisted signup — we open + fill what we can; "
+                    "Assisted signup — opens the isolated Ops Chrome profile; "
                     "CAPTCHA/submit stay with you."
                 ),
                 font=F_CAPTION,
@@ -1595,7 +1595,73 @@ class Dashboard(ttk.Frame):
 
             ctk.CTkLabel(
                 form,
-                text="LOCAL DELETE",
+                text="Chrome ops profile",
+                font=F_CAPTION,
+                text_color=C["muted"],
+                anchor="w",
+            ).pack(fill=tk.X, pady=(14, 4))
+            ctk.CTkLabel(
+                form,
+                text=(
+                    "Isolated browser for employee signups. Install Bitwarden + "
+                    "privacy extensions once, keep it signed out of personal Google."
+                ),
+                font=F_CAPTION,
+                text_color=C["status"],
+                wraplength=520,
+                justify="left",
+                anchor="w",
+            ).pack(fill=tk.X, pady=(0, 8))
+            chrome_row = ctk.CTkFrame(form, fg_color="transparent")
+            chrome_row.pack(fill=tk.X, pady=(0, 4))
+
+            def open_ops_chrome() -> None:
+                from chrome_ops_profile import ChromeOpsProfile
+
+                result = ChromeOpsProfile().open_empty()
+                self.status.set(result.get("detail") or ("Opened" if result.get("ok") else "Failed"))
+
+            def open_ext_desk() -> None:
+                from chrome_ops_profile import ChromeOpsProfile
+
+                result = ChromeOpsProfile().open_setup_desk()
+                self.status.set(result.get("detail") or ("Opened" if result.get("ok") else "Failed"))
+
+            def clear_ops_site_data() -> None:
+                from chrome_ops_profile import ChromeOpsProfile
+
+                result = ChromeOpsProfile().clear_site_data()
+                removed = len(result.get("removed") or [])
+                self.status.set(f"Cleared {removed} ops-profile cache item(s) — close Chrome first if open")
+
+            _ui_button(
+                chrome_row,
+                text="Open Ops Chrome",
+                command=open_ops_chrome,
+                style="primary",
+                height=34,
+                font=F_CAPTION,
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+            _ui_button(
+                chrome_row,
+                text="Extension desk",
+                command=open_ext_desk,
+                style="ghost",
+                height=34,
+                font=F_CAPTION,
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+            _ui_button(
+                chrome_row,
+                text="Clear site data",
+                command=clear_ops_site_data,
+                style="ghost",
+                height=34,
+                font=F_CAPTION,
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            ctk.CTkLabel(
+                form,
+                text="Local delete",
                 font=F_CAPTION,
                 text_color=C["muted"],
                 anchor="w",
@@ -1608,14 +1674,14 @@ class Dashboard(ttk.Frame):
                 corner_radius=R_CTRL,
                 fg_color=C["surface"],
                 button_color=C["card_hi"],
-                button_hover_color="#dedee2",
+                button_hover_color=C["border_soft"],
                 text_color=C["text"],
                 dropdown_fg_color=C["card"],
                 font=F_BODY,
             ).pack(fill=tk.X)
             ctk.CTkLabel(
                 form,
-                text="VAULT CLEANUP",
+                text="Vault cleanup",
                 font=F_CAPTION,
                 text_color=C["muted"],
                 anchor="w",
@@ -1628,7 +1694,7 @@ class Dashboard(ttk.Frame):
                 corner_radius=R_CTRL,
                 fg_color=C["surface"],
                 button_color=C["card_hi"],
-                button_hover_color="#dedee2",
+                button_hover_color=C["border_soft"],
                 text_color=C["text"],
                 dropdown_fg_color=C["card"],
                 font=F_BODY,

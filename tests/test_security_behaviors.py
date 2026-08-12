@@ -753,9 +753,9 @@ class AssistHelpersTests(unittest.TestCase):
             "password": "secret",
             "postal": "02139",
         }
-        with mock.patch("account_automation.webbrowser.open") as open_browser:
+        with mock.patch("account_automation.open_ops_browser", return_value={"ok": True, "detail": "ops"}) as open_ops:
             result = creator.create_marriott_account(personal, "adalovelace1815")
-        open_browser.assert_called_once()
+        open_ops.assert_called_once()
         self.assertEqual(result["status"], "manual_only")
         self.assertEqual(result["service"], "Marriott")
         self.assertEqual(result["filled_fields"], [])
@@ -810,6 +810,25 @@ class AssistHelpersTests(unittest.TestCase):
         removed = manager.cleanup()
         self.assertEqual(removed, ["temp-1"])
         bw.delete_item_permanently.assert_called_once_with("temp-1")
+
+    def test_chrome_ops_profile_writes_setup_desk_and_privacy_prefs(self):
+        from chrome_ops_profile import ChromeOpsProfile, RECOMMENDED_EXTENSIONS
+
+        with tempfile.TemporaryDirectory() as directory:
+            profile = ChromeOpsProfile(Path(directory) / "ops")
+            root = profile.ensure()
+            self.assertTrue(root.exists())
+            prefs = json.loads((profile.default_dir / "Preferences").read_text(encoding="utf-8"))
+            self.assertEqual(prefs["profile"]["name"], "DOWNLOWd Ops")
+            self.assertFalse(prefs["credentials_enable_service"])
+            self.assertFalse(prefs["autofill"]["profile_enabled"])
+            html = profile.setup_page.read_text(encoding="utf-8")
+            self.assertIn("Bitwarden", html)
+            self.assertIn("uBlock Origin", html)
+            for ext in RECOMMENDED_EXTENSIONS:
+                self.assertIn(ext["id"], html)
+            cleared = profile.clear_site_data()
+            self.assertTrue(cleared["ok"])
 
 
 class BitwardenItemApiTests(unittest.TestCase):
