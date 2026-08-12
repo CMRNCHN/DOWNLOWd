@@ -781,3 +781,154 @@ class AccountCreator:
                 "marriott": self.create_marriott_account(personal_data, account_name),
             },
         }
+
+
+# Custom field *names* mirror HTML name/id attributes on each signup form so the
+# Bitwarden browser extension can match them during Auto-fill.
+# match: 0 Domain, 1 Host, 2 StartsWith, 3 Exact
+SITE_AUTOFILL_SPECS: Dict[str, Dict[str, Any]] = {
+    "Outlook": {
+        "urls": ["https://signup.live.com/"],
+        "match": 2,
+        "username_key": "username",
+        "password_key": "password",
+        "custom_fields": [
+            ("MemberName", "username", 0),
+            ("usernameInput", "username", 0),
+            ("loginfmt", "email", 0),
+            ("i0116", "email", 0),
+            ("email", "email", 0),
+        ],
+    },
+    "Hyatt": {
+        "urls": [
+            "https://www.hyatt.com/en-US/member/enroll",
+            "https://www.hyatt.com/",
+        ],
+        "match": 1,
+        "username_key": "email",
+        "password_key": "password",
+        "custom_fields": [
+            ("firstName", "first_name", 0),
+            ("lastName", "last_name", 0),
+            ("email", "email", 0),
+            ("password", "password", 1),
+            ("confirmPassword", "confirm_password", 1),
+        ],
+    },
+    "Marriott": {
+        "urls": [
+            "https://www.marriott.com/loyalty/createAccount/createAccountPage1.mi",
+            "https://www.marriott.com/",
+        ],
+        "match": 1,
+        "username_key": "email",
+        "password_key": "password",
+        "custom_fields": [
+            ("firstName", "first_name", 0),
+            ("lastName", "last_name", 0),
+            ("email", "email", 0),
+            ("password", "password", 1),
+            ("confirmPassword", "confirm_password", 1),
+            ("passwordConfirm", "confirm_password", 1),
+            ("postalCode", "postal", 0),
+            ("zipCode", "postal", 0),
+        ],
+    },
+}
+
+
+def build_temp_autofill_payload(
+    service: str,
+    personal_data: Dict[str, str],
+    account_name: str,
+) -> Dict[str, Any]:
+    """Build a temporary Bitwarden login item shaped for site autofill."""
+    spec = SITE_AUTOFILL_SPECS.get(service)
+    if not spec:
+        raise KeyError(f"No autofill spec for {service}")
+    data = normalize_personal_data(personal_data)
+    username = data.get(spec["username_key"], "") or data.get("email") or data.get("username", "")
+    password = data.get(spec["password_key"], "") or data.get("password", "")
+    fields = []
+    linked = []
+    for field_name, data_key, field_type in spec["custom_fields"]:
+        value = data.get(data_key, "")
+        if not value:
+            continue
+        fields.append({"name": field_name, "value": value, "type": field_type})
+        linked.append(field_name)
+    uris = [{"uri": url, "match": spec["match"]} for url in spec["urls"]]
+    payload = {
+        "type": 1,
+        "name": f"DOWNLOWD · TEMP · {service} · {account_name}",
+        "notes": (
+            "Temporary signup autofill profile created by DOWNLOWd. "
+            "Safe to delete after the account exists."
+        ),
+        "favorite": True,
+        "fields": fields,
+        "login": {
+            "username": username,
+            "password": password,
+            "totp": None,
+            "uris": uris,
+        },
+    }
+    return {"payload": payload, "linked_fields": linked, "urls": list(spec["urls"])}
+
+
+class TemporaryAutofillManager:
+    """Push short-lived Bitwarden login items the browser extension can autofill."""
+
+    def __init__(self, bitwarden: Any):
+        self.bitwarden = bitwarden
+        self._temp_item_ids: List[str] = []
+
+    def push(
+        self,
+        service: str,
+        personal_data: Dict[str, str],
+        account_name: str,
+    ) -> Dict[str, Any]:
+        built = build_temp_autofill_payload(service, personal_data, account_name)
+        item = self.bitwarden.create_item(built["payload"])
+        item_id = str(item.get("id") or "")
+        if item_id:
+            self._temp_item_ids.append(item_id)
+        try:
+            self.bitwarden.sync()
+        except Exception:
+            logging.warning("Bitwarden sync after temp autofill create failed", exc_info=True)
+        linked = built["linked_fields"]
+        return {
+            "autofill_item_id": item_id,
+            "autofill_linked_fields": linked,
+            "autofill_urls": built["urls"],
+            "autofill_ready": bool(item_id),
+            "autofill_message": (
+                f"Temporary Bitwarden autofill profile ready ({len(linked)} linked fields). "
+                "In the browser extension: open the signup page → Auto-fill "
+                f"“DOWNLOWD · TEMP · {service}”."
+            ),
+        }
+
+    def cleanup(self) -> List[str]:
+        removed: List[str] = []
+        for item_id in list(self._temp_item_ids):
+            try:
+                self.bitwarden.delete_item_permanently(item_id)
+                removed.append(item_id)
+            except Exception:
+                try:
+                    self.bitwarden.trash_item(item_id)
+                    removed.append(item_id)
+                except Exception:
+                    logging.warning("Failed to remove temp autofill item %s", item_id, exc_info=True)
+        self._temp_item_ids = [i for i in self._temp_item_ids if i not in removed]
+        if removed:
+            try:
+                self.bitwarden.sync()
+            except Exception:
+                logging.warning("Bitwarden sync after temp autofill cleanup failed", exc_info=True)
+        return removed

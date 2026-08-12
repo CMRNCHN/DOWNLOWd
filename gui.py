@@ -2553,12 +2553,16 @@ class Dashboard(ttk.Frame):
         status = str(result.get("status") or "manual_only")
         status_label = {
             "prefilled": "Prefill done — finish captcha/submit in the browser",
-            "bot_blocked": "Bot wall — use system browser + Paste per field",
-            "manual_only": "Manual — click each signup field, then Paste",
-            "manual_completion_required": "Manual — click each signup field, then Paste",
+            "bot_blocked": "Bot wall — use Bitwarden Auto-fill + Paste backup",
+            "manual_only": "Use Bitwarden Auto-fill on the signup page",
+            "manual_completion_required": "Use Bitwarden Auto-fill on the signup page",
             "error": "Error — Retry or complete manually",
         }.get(status, status)
+        if result.get("autofill_ready"):
+            status_label = "Temp autofill profile pushed to Bitwarden"
         url = result.get("url") or ""
+        autofill_message = str(result.get("autofill_message") or "")
+        linked_fields = list(result.get("autofill_linked_fields") or [])
         note = (
             "Skip Outlook keeps Hyatt/Marriott pending."
             if service == "Outlook"
@@ -2616,6 +2620,27 @@ class Dashboard(ttk.Frame):
             wraplength=300,
             justify="left",
         ).pack(fill=tk.X, padx=16, pady=(8, 2))
+        if autofill_message:
+            ctk.CTkLabel(
+                card,
+                text=autofill_message,
+                font=F_CAPTION,
+                text_color=C["muted"],
+                anchor="w",
+                wraplength=300,
+                justify="left",
+            ).pack(fill=tk.X, padx=16, pady=(0, 2))
+        if linked_fields:
+            ctk.CTkLabel(
+                card,
+                text="Linked fields: " + ", ".join(linked_fields[:8])
+                + ("…" if len(linked_fields) > 8 else ""),
+                font=F_CAPTION,
+                text_color=C["status"],
+                anchor="w",
+                wraplength=300,
+                justify="left",
+            ).pack(fill=tk.X, padx=16, pady=(0, 4))
         if url:
             ctk.CTkLabel(
                 card,
@@ -2691,7 +2716,10 @@ class Dashboard(ttk.Frame):
 
         ctk.CTkLabel(
             card,
-            text=f"Click the signup field first, then Paste. {note}",
+            text=(
+                "Preferred: Bitwarden extension → Auto-fill the TEMP item. "
+                f"Backup: click a signup field, then Paste. {note}"
+            ),
             font=F_CAPTION,
             text_color=C["muted"],
             wraplength=300,

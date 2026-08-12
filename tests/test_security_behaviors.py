@@ -85,6 +85,18 @@ class FakeBitwarden:
     def import_json(self, _payload, _collection):
         return None
 
+    def create_item(self, payload):
+        return {"id": "fake-temp-item", "name": payload.get("name", "")}
+
+    def sync(self):
+        return None
+
+    def delete_item_permanently(self, _item_id):
+        return None
+
+    def trash_item(self, _item_id):
+        return None
+
 
 class FakeAccountCreator:
     def __init__(self):
@@ -759,6 +771,45 @@ class AssistHelpersTests(unittest.TestCase):
             result = arrange_windows_for_assist()
         self.assertFalse(result["ok"])
         self.assertIn("macOS", result["detail"])
+
+    def test_temp_autofill_payload_links_site_field_names(self):
+        from account_automation import (
+            TemporaryAutofillManager,
+            build_temp_autofill_payload,
+        )
+
+        personal = {
+            "first_name": "Cameron",
+            "last_name": "Cohen",
+            "email": "cameroncohen1994@outlook.com",
+            "username": "cameroncohen1994",
+            "password": "DemoPass1!",
+            "postal": "20002",
+        }
+        outlook = build_temp_autofill_payload("Outlook", personal, "cameroncohen1994")
+        self.assertTrue(outlook["payload"]["name"].startswith("DOWNLOWD · TEMP · Outlook"))
+        self.assertEqual(outlook["payload"]["login"]["username"], "cameroncohen1994")
+        field_names = {f["name"] for f in outlook["payload"]["fields"]}
+        self.assertIn("MemberName", field_names)
+        self.assertIn("usernameInput", field_names)
+
+        marriott = build_temp_autofill_payload("Marriott", personal, "cameroncohen1994")
+        marriott_names = {f["name"] for f in marriott["payload"]["fields"]}
+        self.assertIn("firstName", marriott_names)
+        self.assertIn("postalCode", marriott_names)
+        self.assertIn("confirmPassword", marriott_names)
+
+        bw = mock.Mock()
+        bw.create_item.return_value = {"id": "temp-1"}
+        manager = TemporaryAutofillManager(bw)
+        pushed = manager.push("Hyatt", personal, "cameroncohen1994")
+        self.assertTrue(pushed["autofill_ready"])
+        self.assertEqual(pushed["autofill_item_id"], "temp-1")
+        self.assertIn("firstName", pushed["autofill_linked_fields"])
+        bw.sync.assert_called()
+        removed = manager.cleanup()
+        self.assertEqual(removed, ["temp-1"])
+        bw.delete_item_permanently.assert_called_once_with("temp-1")
 
 
 class BitwardenItemApiTests(unittest.TestCase):
