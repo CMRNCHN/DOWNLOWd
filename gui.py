@@ -1205,8 +1205,8 @@ class Dashboard(ttk.Frame):
         profile_card = _ui_panel(right)
         profile_card.grid(row=0, column=0, sticky="nsew", pady=(0, 12))
 
-        self.profile_title = tk.StringVar(value="Select an employee")
-        self.profile_subtitle = tk.StringVar(value="Choose a name on the left")
+        self.profile_title = tk.StringVar(value="Profile")
+        self.profile_subtitle = tk.StringVar(value="Pick someone from People")
         top = ctk.CTkFrame(profile_card, fg_color="transparent")
         top.pack(fill=tk.X, padx=18, pady=(16, 4))
         ctk.CTkLabel(
@@ -1267,7 +1267,7 @@ class Dashboard(ttk.Frame):
             corner_radius=0,
         )
         self.profile_viewer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 14))
-        self._render_profile_viewer("Select an employee to load their vault profile.")
+        self._render_profile_viewer("Pick someone from People to load their vault profile.")
 
         actions_card = _ui_panel(right)
         actions_card.grid(row=1, column=0, sticky="ew")
@@ -1279,7 +1279,7 @@ class Dashboard(ttk.Frame):
             font=F_CAPTION,
             text_color=C["muted"],
         ).pack(side=tk.LEFT)
-        self.actions_hint = tk.StringVar(value="Select an employee")
+        self.actions_hint = tk.StringVar(value="No one selected")
         ctk.CTkLabel(
             ahead,
             textvariable=self.actions_hint,
@@ -2156,10 +2156,10 @@ class Dashboard(ttk.Frame):
         self.selected_profile_id = None
         self.selected_employee = None
         self._refresh_employee_list()
-        self.profile_title.set("Select an employee")
-        self.profile_subtitle.set("Choose a name on the left")
-        self.actions_hint.set("Select an employee")
-        self._render_profile_viewer("Select an employee to load their vault profile.")
+        self.profile_title.set("Profile")
+        self.profile_subtitle.set("Pick someone from People")
+        self.actions_hint.set("No one selected")
+        self._render_profile_viewer("Pick someone from People to load their vault profile.")
         self._update_profile_actions({})
         self.ledger_filter.set("All")
         self._refresh_transaction_list()
