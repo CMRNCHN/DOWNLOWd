@@ -1146,7 +1146,7 @@ class Dashboard(ttk.Frame):
         head.pack(fill=tk.X, padx=14, pady=(14, 6))
         ctk.CTkLabel(
             head,
-            text="People",
+            text="Employee List",
             font=F_CAPTION,
             text_color=C["muted"],
         ).pack(side=tk.LEFT)
@@ -1204,20 +1204,21 @@ class Dashboard(ttk.Frame):
 
         profile_card = _ui_panel(right)
         profile_card.grid(row=0, column=0, sticky="nsew", pady=(0, 12))
+        self._profile_card = profile_card
 
-        self.profile_title = tk.StringVar(value="Profile")
-        self.profile_subtitle = tk.StringVar(value="Pick someone from People")
-        top = ctk.CTkFrame(profile_card, fg_color="transparent")
-        top.pack(fill=tk.X, padx=18, pady=(16, 4))
+        # Blank until an employee is selected; then title becomes their name.
+        self.profile_title = tk.StringVar(value="")
+        self.profile_subtitle = tk.StringVar(value="")
+        self._profile_top = ctk.CTkFrame(profile_card, fg_color="transparent")
         ctk.CTkLabel(
-            top,
+            self._profile_top,
             textvariable=self.profile_title,
             font=F_DISPLAY,
             text_color=C["ink"],
             anchor="w",
         ).pack(side=tk.LEFT)
         self.profile_edit_button = _ui_button(
-            top,
+            self._profile_top,
             text="Edit",
             command=self._edit_selected_identity,
             style="primary",
@@ -1227,16 +1228,15 @@ class Dashboard(ttk.Frame):
             state=tk.DISABLED,
         )
         self.profile_edit_button.pack(side=tk.RIGHT)
-        ctk.CTkLabel(
+        self._profile_subtitle_label = ctk.CTkLabel(
             profile_card,
             textvariable=self.profile_subtitle,
             font=F_CAPTION,
             text_color=C["muted"],
             anchor="w",
-        ).pack(fill=tk.X, padx=18, pady=(0, 10))
+        )
 
-        rail = ctk.CTkFrame(profile_card, fg_color="transparent")
-        rail.pack(fill=tk.X, padx=14, pady=(0, 8))
+        self._role_rail = ctk.CTkFrame(profile_card, fg_color="transparent")
         self.record_buttons = {}
         labels = {
             "identity": "Identity",
@@ -1247,7 +1247,7 @@ class Dashboard(ttk.Frame):
         }
         for role in RECORD_ROLES:
             btn = ctk.CTkButton(
-                rail,
+                self._role_rail,
                 text=labels.get(role, role),
                 command=lambda r=role: self._show_profile_record(r),
                 width=78,
@@ -1267,7 +1267,7 @@ class Dashboard(ttk.Frame):
             corner_radius=0,
         )
         self.profile_viewer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 14))
-        self._render_profile_viewer("Pick someone from People to load their vault profile.")
+        self._set_profile_panel_populated(False)
 
         actions_card = _ui_panel(right)
         actions_card.grid(row=1, column=0, sticky="ew")
@@ -1279,7 +1279,7 @@ class Dashboard(ttk.Frame):
             font=F_CAPTION,
             text_color=C["muted"],
         ).pack(side=tk.LEFT)
-        self.actions_hint = tk.StringVar(value="No one selected")
+        self.actions_hint = tk.StringVar(value="")
         ctk.CTkLabel(
             ahead,
             textvariable=self.actions_hint,
@@ -1651,6 +1651,30 @@ class Dashboard(ttk.Frame):
 
         self._open_sheet("Settings", build, subtitle="Stays in this window")
 
+    def _set_profile_panel_populated(self, populated: bool) -> None:
+        """Show employee chrome only after someone is selected from the list."""
+        if not hasattr(self, "_profile_top"):
+            return
+        if populated:
+            if not self._profile_top.winfo_manager():
+                self._profile_top.pack(fill=tk.X, padx=18, pady=(16, 4), before=self.profile_viewer)
+            if not self._profile_subtitle_label.winfo_manager():
+                self._profile_subtitle_label.pack(
+                    fill=tk.X, padx=18, pady=(0, 10), before=self.profile_viewer
+                )
+            if not self._role_rail.winfo_manager():
+                self._role_rail.pack(fill=tk.X, padx=14, pady=(0, 8), before=self.profile_viewer)
+            return
+        for widget in (self._profile_top, self._profile_subtitle_label, self._role_rail):
+            try:
+                widget.pack_forget()
+            except tk.TclError:
+                pass
+        self.profile_title.set("")
+        self.profile_subtitle.set("")
+        self.actions_hint.set("")
+        self._render_profile_viewer(blank=True)
+
     def _select_employee_profile(self, employee_id: str) -> None:
         """Load the selected employee profile into the main window."""
         profile = self.profile_store.get(employee_id)
@@ -1660,9 +1684,10 @@ class Dashboard(ttk.Frame):
         self.selected_employee = profile.get("display_name")
         self._clear_profile_secrets()
         self._refresh_active_employees()
+        self._set_profile_panel_populated(True)
         self.profile_title.set(profile.get("display_name", "Employee"))
         self.profile_subtitle.set("Loading vault records…")
-        self.actions_hint.set(profile.get("email") or profile.get("username") or "Actions")
+        self.actions_hint.set(profile.get("email") or profile.get("username") or "")
         self.ledger_filter.set(profile.get("display_name") or "All")
         self.selected_record_role = "identity"
         self._render_profile_viewer("Loading…")
@@ -1823,7 +1848,7 @@ class Dashboard(ttk.Frame):
             rows.append(("Notes", notes, False))
         return rows
 
-    def _render_profile_viewer(self, message: Optional[str] = None):
+    def _render_profile_viewer(self, message: Optional[str] = None, *, blank: bool = False):
         if not hasattr(self, "profile_viewer"):
             return
         try:
@@ -1833,6 +1858,8 @@ class Dashboard(ttk.Frame):
             return
         for child in self.profile_viewer.winfo_children():
             child.destroy()
+        if blank:
+            return
         if message:
             ctk.CTkLabel(
                 self.profile_viewer,
@@ -2156,10 +2183,7 @@ class Dashboard(ttk.Frame):
         self.selected_profile_id = None
         self.selected_employee = None
         self._refresh_employee_list()
-        self.profile_title.set("Profile")
-        self.profile_subtitle.set("Pick someone from People")
-        self.actions_hint.set("No one selected")
-        self._render_profile_viewer("Pick someone from People to load their vault profile.")
+        self._set_profile_panel_populated(False)
         self._update_profile_actions({})
         self.ledger_filter.set("All")
         self._refresh_transaction_list()
