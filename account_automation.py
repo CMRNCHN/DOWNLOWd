@@ -180,6 +180,102 @@ def paste_field_value(value: str) -> bool:
         return False
 
 
+def arrange_windows_for_assist(
+    *,
+    app_title: str = "DOWNLOWd",
+    browser_apps: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Best-effort side-by-side layout: DOWNLOWd left, browser right (macOS).
+
+    Embedding a live browser inside Tk is not supported; this keeps both
+    visible so the operator can watch signup while using the field companion.
+    """
+    result: Dict[str, Any] = {"ok": False, "platform": sys.platform, "detail": ""}
+    if sys.platform != "darwin":
+        result["detail"] = "Side-by-side arrange is implemented for macOS only."
+        return result
+    browsers = browser_apps or ["Google Chrome", "Safari", "Microsoft Edge", "Arc"]
+    browser_list = ", ".join(f'"{name}"' for name in browsers)
+    script = f'''
+tell application "System Events"
+  set screenW to item 1 of (size of (first window of process "Finder" whose role description is "window"))
+end tell
+try
+  tell application "Finder"
+    set screenBounds to bounds of window of desktop
+    set screenW to item 3 of screenBounds
+    set screenH to item 4 of screenBounds
+  end tell
+on error
+  set screenW to 1440
+  set screenH to 900
+end try
+set gap to 12
+set leftW to (screenW * 0.38) as integer
+set rightX to leftW + gap
+set rightW to screenW - rightX - gap
+try
+  tell application "{app_title}" to activate
+end try
+tell application "System Events"
+  if exists (process "{app_title}") then
+    tell process "{app_title}"
+      set frontmost to true
+      try
+        set position of front window to {{gap, 40}}
+        set size of front window to {{leftW, screenH - 80}}
+      end try
+    end tell
+  end if
+end tell
+set browserName to ""
+repeat with candidate in {{{browser_list}}}
+  tell application "System Events"
+    if exists (process (candidate as text)) then
+      set browserName to candidate as text
+      exit repeat
+    end if
+  end tell
+end repeat
+if browserName is "" then
+  return "no_browser"
+end if
+tell application "System Events"
+  tell process browserName
+    set frontmost to true
+    try
+      set position of front window to {{rightX, 40}}
+      set size of front window to {{rightW, screenH - 80}}
+    end try
+  end tell
+end tell
+return browserName
+'''
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+        )
+        out = (proc.stdout or "").strip()
+        if proc.returncode != 0:
+            result["detail"] = (proc.stderr or out or "osascript failed").strip()
+            return result
+        if out == "no_browser":
+            result["detail"] = "No Chrome/Safari/Edge window open yet."
+            return result
+        result["ok"] = True
+        result["browser"] = out
+        result["detail"] = f"Arranged {app_title} left, {out} right."
+        return result
+    except Exception as exc:
+        result["detail"] = str(exc)
+        return result
+
+
 def parse_confirmation(result: Any) -> str:
     """Normalize callback returns to done | skip | retry."""
     if result is True:

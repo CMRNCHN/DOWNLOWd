@@ -752,6 +752,14 @@ class AssistHelpersTests(unittest.TestCase):
         self.assertIn("postal: 02139", result["payload"])
         self.assertEqual(result["personal_data"]["confirm_password"], "secret")
 
+    def test_arrange_windows_reports_non_mac_clearly(self):
+        from account_automation import arrange_windows_for_assist
+
+        with mock.patch("account_automation.sys.platform", "linux"):
+            result = arrange_windows_for_assist()
+        self.assertFalse(result["ok"])
+        self.assertIn("macOS", result["detail"])
+
 
 class BitwardenItemApiTests(unittest.TestCase):
     def test_create_item_encodes_payload_without_writing_it_to_disk(self):

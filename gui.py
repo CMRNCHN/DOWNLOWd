@@ -39,6 +39,7 @@ from account_automation import (
     ASSIST_FIELD_KEYS,
     ASSIST_FIELD_LABELS,
     assist_field_value,
+    arrange_windows_for_assist,
     copy_to_clipboard,
     format_assist_payload,
     paste_field_value,
@@ -1058,10 +1059,12 @@ class Dashboard(ttk.Frame):
         self._revealed_profile_values: Set[Tuple[str, str]] = set()
         self._ledger_employee_map: Dict[str, str] = {}
         self._assist_panel: Optional[ctk.CTkFrame] = None
+        self._assist_window: Optional[ctk.CTkToplevel] = None
         self._assist_event = threading.Event()
         self._assist_decision = "skip"
         self._assist_personal: Dict[str, str] = {}
         self._assist_service = ""
+        self._assist_field_index = 0
         self._sheet_close_callback: Optional[Callable[[], None]] = None
         self._budget_queue: List[Dict[str, Any]] = []
 
@@ -2459,13 +2462,64 @@ class Dashboard(ttk.Frame):
         self.status.set("Copied assist payload")
 
     def _close_assist_panel(self, decision: str) -> None:
-        if self._assist_event.is_set() and self._assist_panel is None:
+        if self._assist_event.is_set() and self._assist_window is None and self._assist_panel is None:
             return
         self._assist_decision = decision
         self._assist_panel = None
+        win = self._assist_window
+        self._assist_window = None
         self._sheet_close_callback = None
-        self._dismiss_sheet()
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+        try:
+            self._dismiss_sheet()
+        except Exception:
+            pass
         self._assist_event.set()
+
+    def _assist_current_fields(self) -> List[str]:
+        keys: List[str] = []
+        for key in ASSIST_FIELD_KEYS:
+            value = assist_field_value(self._assist_personal, key)
+            if key == "email" and self._assist_service == "Outlook" and not value:
+                value = assist_field_value(self._assist_personal, "username")
+            if value:
+                keys.append(key)
+        return keys or list(ASSIST_FIELD_KEYS)
+
+    def _refresh_assist_companion(self) -> None:
+        win = self._assist_window
+        if win is None:
+            return
+        keys = self._assist_current_fields()
+        if not keys:
+            return
+        self._assist_field_index = max(0, min(self._assist_field_index, len(keys) - 1))
+        key = keys[self._assist_field_index]
+        value = assist_field_value(self._assist_personal, key)
+        if key == "email" and self._assist_service == "Outlook" and not value:
+            value = assist_field_value(self._assist_personal, "username")
+        label = ASSIST_FIELD_LABELS.get(key, key)
+        preview = "••••••••" if "password" in key else value
+        if len(preview) > 42:
+            preview = preview[:41] + "…"
+        try:
+            win._step_var.set(f"Field {self._assist_field_index + 1} of {len(keys)}")
+            win._field_var.set(label)
+            win._value_var.set(preview or "—")
+            win._paste_key = key
+        except tk.TclError:
+            pass
+
+    def _assist_step(self, delta: int) -> None:
+        keys = self._assist_current_fields()
+        if not keys:
+            return
+        self._assist_field_index = (self._assist_field_index + delta) % len(keys)
+        self._refresh_assist_companion()
 
     def _show_assist_panel(
         self,
@@ -2486,172 +2540,214 @@ class Dashboard(ttk.Frame):
         self._assist_personal = personal
         self._assist_service = service
         self._assist_decision = "skip"
+        self._assist_field_index = 0
         self._assist_event.clear()
+
+        if self._assist_window is not None:
+            try:
+                self._assist_window.destroy()
+            except tk.TclError:
+                pass
+            self._assist_window = None
 
         status = str(result.get("status") or "manual_only")
         status_label = {
-            "prefilled": "prefilled — finish captcha/submit",
-            "bot_blocked": "bot blocked → system browser",
-            "manual_only": "manual — use field buttons / ⌘1–6",
-            "manual_completion_required": "manual — use field buttons / ⌘1–6",
-            "error": "error — try Retry or complete manually",
+            "prefilled": "Prefill done — finish captcha/submit in the browser",
+            "bot_blocked": "Bot wall — use system browser + Paste per field",
+            "manual_only": "Manual — click each signup field, then Paste",
+            "manual_completion_required": "Manual — click each signup field, then Paste",
+            "error": "Error — Retry or complete manually",
         }.get(status, status)
-        filled = result.get("filled_fields") or []
         url = result.get("url") or ""
         note = (
             "Skip Outlook keeps Hyatt/Marriott pending."
             if service == "Outlook"
-            else "Done only after the account exists."
+            else "Press Done only after the account exists."
         )
+        employee_name = employee.get("full_name") or "Employee"
 
-        def build(host: ctk.CTkFrame) -> None:
-            self._assist_panel = host
+        # Keep DOWNLOWd visible; float a compact field companion beside the browser.
+        arrange = arrange_windows_for_assist(app_title="DOWNLOWd")
+        if arrange.get("detail"):
+            logging.info("Assist layout: %s", arrange["detail"])
+
+        win = ctk.CTkToplevel(self.app.root)
+        self._assist_window = win
+        win.title(f"{service} assist")
+        win.resizable(False, False)
+        win.configure(fg_color=C["bg"])
+        try:
+            win.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        width, height = 360, 460
+        try:
+            screen_w = max(win.winfo_screenwidth(), width + 40)
+            screen_h = max(win.winfo_screenheight(), height + 40)
+            x = max(screen_w - width - 28, 40)
+            y = max((screen_h - height) // 4, 48)
+            win.geometry(f"{width}x{height}+{x}+{y}")
+        except tk.TclError:
+            win.geometry(f"{width}x{height}+80+80")
+
+        card = _ui_panel(win)
+        card.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(
+            card,
+            text=f"{service} assist",
+            font=F_TITLE,
+            text_color=C["ink"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=16, pady=(16, 2))
+        ctk.CTkLabel(
+            card,
+            text=employee_name,
+            font=F_CAPTION,
+            text_color=C["muted"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=16)
+        ctk.CTkLabel(
+            card,
+            text=status_label,
+            font=F_CAPTION,
+            text_color=C["accent"],
+            anchor="w",
+            wraplength=300,
+            justify="left",
+        ).pack(fill=tk.X, padx=16, pady=(8, 2))
+        if url:
             ctk.CTkLabel(
-                host,
-                text=status_label,
+                card,
+                text=url,
                 font=F_CAPTION,
-                text_color=C["accent"],
+                text_color=C["status"],
                 anchor="w",
-                wraplength=520,
+                wraplength=300,
                 justify="left",
-            ).pack(fill=tk.X, pady=(0, 2))
-            ctk.CTkLabel(
-                host,
-                text=f"Filled: {', '.join(filled) if filled else 'none'}",
-                font=F_CAPTION,
-                text_color=C["muted"],
-                anchor="w",
-            ).pack(fill=tk.X, pady=(0, 4))
-            if url:
-                ctk.CTkLabel(
-                    host,
-                    text=url,
-                    font=F_CAPTION,
-                    text_color=C["muted"],
-                    anchor="w",
-                    wraplength=520,
-                    justify="left",
-                ).pack(fill=tk.X, pady=(0, 6))
+            ).pack(fill=tk.X, padx=16, pady=(0, 8))
 
-            fields = ctk.CTkScrollableFrame(host, fg_color="transparent")
-            fields.pack(fill=tk.BOTH, expand=True)
-            for index, key in enumerate(ASSIST_FIELD_KEYS, start=1):
-                value = assist_field_value(personal, key)
-                if key == "email" and service == "Outlook" and not value:
-                    value = assist_field_value(personal, "username")
-                row = ctk.CTkFrame(fields, fg_color=C["surface"], corner_radius=R_CTRL)
-                row.pack(fill=tk.X, pady=2)
-                label = ASSIST_FIELD_LABELS.get(key, key)
-                ctk.CTkLabel(
-                    row,
-                    text=f"⌘{index} {label}",
-                    font=F_DATA,
-                    text_color=C["ink"],
-                    width=110,
-                    anchor="w",
-                ).pack(side=tk.LEFT, padx=8, pady=6)
-                preview = "••••••" if "password" in key and value else (value or "—")
-                if len(preview) > 36:
-                    preview = preview[:35] + "…"
-                ctk.CTkLabel(
-                    row,
-                    text=preview,
-                    font=F_DATA,
-                    text_color=C["muted"],
-                    anchor="w",
-                ).pack(side=tk.LEFT, fill=tk.X, expand=True)
-                ctk.CTkButton(
-                    row,
-                    text="Copy",
-                    width=48,
-                    height=24,
-                    corner_radius=R_CTRL,
-                    fg_color=C["card"],
-                    hover_color=C["card_hi"],
-                    text_color=C["ink"],
-                    font=F_CAPTION,
-                    command=lambda k=key: self._assist_copy_field(k),
-                ).pack(side=tk.RIGHT, padx=4, pady=4)
-                ctk.CTkButton(
-                    row,
-                    text="Paste",
-                    width=52,
-                    height=24,
-                    corner_radius=R_CTRL,
-                    fg_color=C["accent"],
-                    hover_color=C["accent_hover"],
-                    text_color=C["paper"],
-                    font=F_CAPTION,
-                    command=lambda k=key: self._assist_paste_field(k),
-                ).pack(side=tk.RIGHT, padx=(0, 4), pady=4)
+        step = ctk.CTkFrame(card, fg_color=C["surface"], corner_radius=R_CTRL)
+        step.pack(fill=tk.X, padx=16, pady=(4, 8))
+        win._step_var = tk.StringVar(value="")
+        win._field_var = tk.StringVar(value="")
+        win._value_var = tk.StringVar(value="")
+        win._paste_key = ASSIST_FIELD_KEYS[0]
+        ctk.CTkLabel(
+            step,
+            textvariable=win._step_var,
+            font=F_CAPTION,
+            text_color=C["muted"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=14, pady=(12, 2))
+        ctk.CTkLabel(
+            step,
+            textvariable=win._field_var,
+            font=F_DISPLAY,
+            text_color=C["ink"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=14)
+        ctk.CTkLabel(
+            step,
+            textvariable=win._value_var,
+            font=F_DATA,
+            text_color=C["muted"],
+            anchor="w",
+        ).pack(fill=tk.X, padx=14, pady=(4, 12))
 
-            ctk.CTkLabel(
-                host,
-                text=f"Click the signup field, then Paste / ⌘1–6. {note}",
-                font=F_CAPTION,
-                text_color=C["muted"],
-                wraplength=520,
-                justify="left",
-                anchor="w",
-            ).pack(fill=tk.X, pady=(6, 8))
+        def paste_current() -> None:
+            self._assist_paste_field(getattr(win, "_paste_key", ASSIST_FIELD_KEYS[0]))
+            # Advance after a successful paste so walkthrough stays one field ahead.
+            self.after(180, lambda: self._assist_step(1))
 
-            actions = ctk.CTkFrame(host, fg_color="transparent")
-            actions.pack(fill=tk.X)
-            ctk.CTkButton(
-                actions,
-                text="Done",
-                width=90,
-                height=32,
-                corner_radius=R_CTRL,
-                fg_color=C["accent"],
-                hover_color=C["accent_hover"],
-                text_color=C["paper"],
-                font=F_TITLE,
-                command=lambda: self._close_assist_panel("done"),
-            ).pack(side=tk.LEFT)
-            ctk.CTkButton(
-                actions,
-                text="Skip",
-                width=70,
-                height=32,
-                corner_radius=R_CTRL,
-                fg_color=C["surface"],
-                hover_color=C["card_hi"],
-                text_color=C["ink"],
-                font=F_BODY,
-                command=lambda: self._close_assist_panel("skip"),
-            ).pack(side=tk.LEFT, padx=6)
-            ctk.CTkButton(
-                actions,
-                text="Retry",
-                width=70,
-                height=32,
-                corner_radius=R_CTRL,
-                fg_color=C["surface"],
-                hover_color=C["card_hi"],
-                text_color=C["ink"],
-                font=F_BODY,
-                command=lambda: self._close_assist_panel("retry"),
-            ).pack(side=tk.LEFT)
-            ctk.CTkButton(
-                actions,
-                text="Payload",
-                width=70,
-                height=32,
-                corner_radius=R_CTRL,
-                fg_color=C["ink"],
-                hover_color=C["ink"],
-                text_color=C["paper"],
-                font=F_DATA,
-                command=self._assist_copy_payload,
-            ).pack(side=tk.RIGHT)
+        _ui_button(
+            card,
+            text="Paste this field into browser",
+            command=paste_current,
+            style="primary",
+            height=44,
+            font=F_TITLE,
+        ).pack(fill=tk.X, padx=16, pady=(4, 8))
 
-        self._open_sheet(
-            f"{service} assist",
-            build,
-            subtitle=employee.get("full_name") or "Employee",
-            on_close=lambda: self._close_assist_panel("skip"),
-        )
+        nav = ctk.CTkFrame(card, fg_color="transparent")
+        nav.pack(fill=tk.X, padx=16, pady=(0, 8))
+        _ui_button(
+            nav,
+            text="Back",
+            command=lambda: self._assist_step(-1),
+            style="ghost",
+            height=34,
+            font=F_CAPTION,
+            width=90,
+        ).pack(side=tk.LEFT)
+        _ui_button(
+            nav,
+            text="Next field",
+            command=lambda: self._assist_step(1),
+            style="ghost",
+            height=34,
+            font=F_CAPTION,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+
+        ctk.CTkLabel(
+            card,
+            text=f"Click the signup field first, then Paste. {note}",
+            font=F_CAPTION,
+            text_color=C["muted"],
+            wraplength=300,
+            justify="left",
+            anchor="w",
+        ).pack(fill=tk.X, padx=16, pady=(4, 10))
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill=tk.X, padx=16, pady=(0, 16))
+        _ui_button(
+            actions,
+            text="Done",
+            command=lambda: self._close_assist_panel("done"),
+            style="primary",
+            height=34,
+            font=F_CAPTION,
+            width=78,
+        ).pack(side=tk.LEFT)
+        _ui_button(
+            actions,
+            text="Skip",
+            command=lambda: self._close_assist_panel("skip"),
+            style="ghost",
+            height=34,
+            font=F_CAPTION,
+            width=64,
+        ).pack(side=tk.LEFT, padx=6)
+        _ui_button(
+            actions,
+            text="Retry",
+            command=lambda: self._close_assist_panel("retry"),
+            style="ghost",
+            height=34,
+            font=F_CAPTION,
+            width=64,
+        ).pack(side=tk.LEFT)
+        _ui_button(
+            actions,
+            text="Payload",
+            command=self._assist_copy_payload,
+            style="ink",
+            height=34,
+            font=F_CAPTION,
+            width=72,
+        ).pack(side=tk.RIGHT)
+
+        def on_close() -> None:
+            self._close_assist_panel("skip")
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+        self._refresh_assist_companion()
+        try:
+            win.lift()
+            win.focus_force()
+        except tk.TclError:
+            pass
 
     def _confirm_account_stage(
         self,
