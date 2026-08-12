@@ -332,6 +332,12 @@ class AccountCreator:
         options.add_argument("--profile-directory=Default")
         options.add_argument("--no-first-run")
         options.add_argument("--disable-sync")
+        load_arg = ops.load_extension_arg()
+        if load_arg:
+            options.add_argument(load_arg)
+            options.add_argument(
+                "--disable-extensions-except=" + load_arg.split("=", 1)[1]
+            )
         chrome_bin = find_chrome_binary()
         if chrome_bin:
             options.binary_location = chrome_bin

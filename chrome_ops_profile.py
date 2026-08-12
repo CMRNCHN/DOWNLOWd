@@ -1,8 +1,8 @@
 """Isolated Chrome profile for DOWNLOWd partner-account creation.
 
 Keeps employee signup browsing out of the operator's personal Chrome profile,
-disables Chrome password/autofill (Bitwarden owns secrets), and opens a setup
-desk for privacy + account-creation extensions.
+disables Chrome password/autofill (Bitwarden owns secrets), downloads privacy /
+fingerprinting extensions into a local desk, and loads them via --load-extension.
 """
 
 from __future__ import annotations
@@ -11,15 +11,21 @@ import json
 import logging
 import os
 import shutil
+import struct
 import subprocess
 import sys
+import tempfile
+import urllib.error
+import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 PROFILE_ROOT = Path.home() / ".downlowd" / "chrome-ops-profile"
+EXTENSIONS_ROOT = Path.home() / ".downlowd" / "chrome-ops-extensions"
 SETUP_PAGE_NAME = "downlowd-ops-setup.html"
 
-# Well-known Chrome Web Store IDs — privacy + account-creation helpers.
+# Chrome Web Store IDs — account creation + identity / fingerprint protection.
 RECOMMENDED_EXTENSIONS: Tuple[Dict[str, str], ...] = (
     {
         "id": "nngceckbapebfimnlniiiahkandclblb",
@@ -40,17 +46,58 @@ RECOMMENDED_EXTENSIONS: Tuple[Dict[str, str], ...] = (
         "category": "identity_protection",
     },
     {
-        "id": "pkehgijcmpdhfbdbbnkilgnmqnhapjdo",
-        "name": "Privacy Badger",
-        "why": "Learn and block invisible third-party trackers during enroll flows.",
-        "category": "identity_protection",
-    },
-    {
         "id": "gnoaanpbfnjakaddkecnnamnfkebhgle",
         "name": "Cookie Guardian",
         "why": "Auto-delete cookies when tabs close so employee signup sessions do not linger.",
         "category": "identity_protection",
     },
+    {
+        "id": "ldpochfccmkkmhdbclfhpagapcfdljkj",
+        "name": "Decentraleyes",
+        "why": "Serve common CDN scripts locally so fewer third parties see signup traffic.",
+        "category": "identity_protection",
+    },
+    {
+        "id": "fihnjjcciajhdojfnbdddfaoknhalnja",
+        "name": "I don't care about cookies",
+        "why": "Dismiss cookie walls so signup forms stay usable without extra tracking consent clicks.",
+        "category": "identity_protection",
+    },
+    {
+        "id": "lanfdkkpgfjfdikkncbnojekcppdebfp",
+        "name": "Canvas Fingerprint Defender",
+        "why": "Noise canvas reads so sites cannot sticky-ID this ops browser via canvas fingerprinting.",
+        "category": "fingerprinting",
+    },
+    {
+        "id": "fjkmabmdepjfammlpliljpnbhleegehm",
+        "name": "WebRTC Control",
+        "why": "Block WebRTC IP leaks that can reveal the real network behind a VPN/proxy.",
+        "category": "fingerprinting",
+    },
+    {
+        "id": "hkgfoiooedgoejojocmhlaklaeopbecg",
+        "name": "WebRTC Network Limiter",
+        "why": "Chrome's own WebRTC IP-handling control — keep non-proxied UDP addresses private.",
+        "category": "fingerprinting",
+    },
+    {
+        "id": "bhchdcejhohfmigjafbampogmaanbfkg",
+        "name": "User-Agent Switcher and Manager",
+        "why": "Optional UA spoofing when a signup site keys too hard on browser/platform strings.",
+        "category": "fingerprinting",
+    },
+)
+
+_CATEGORY_LABELS = {
+    "account_creation": "Account creation",
+    "identity_protection": "Identity protection",
+    "fingerprinting": "Fingerprinting",
+}
+
+_CHROME_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
 
@@ -71,6 +118,7 @@ def find_chrome_binary() -> Optional[str]:
             [
                 "/usr/bin/google-chrome-stable",
                 "/usr/bin/google-chrome",
+                "/usr/local/bin/google-chrome",
                 "/usr/bin/chromium-browser",
                 "/usr/bin/chromium",
                 "/snap/bin/chromium",
@@ -99,22 +147,142 @@ def store_url(extension_id: str) -> str:
     return f"https://chromewebstore.google.com/detail/{extension_id}"
 
 
+def _chrome_major_version() -> str:
+    chrome = find_chrome_binary()
+    if not chrome:
+        return "131.0.0.0"
+    try:
+        proc = subprocess.run(
+            [chrome, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        text = (proc.stdout or proc.stderr or "").strip()
+        for token in text.replace(",", " ").split():
+            if token[0].isdigit() and "." in token:
+                parts = token.split(".")
+                if len(parts) >= 1:
+                    return f"{parts[0]}.0.0.0"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "131.0.0.0"
+
+
+def crx_download_url(extension_id: str, *, prod_version: Optional[str] = None) -> str:
+    version = prod_version or _chrome_major_version()
+    return (
+        "https://clients2.google.com/service/update2/crx"
+        f"?response=redirect&os=linux&arch=x64&os_arch=x86_64&nacl_arch=x86-64"
+        f"&prod=chromiumcrx&prodchannel=&prodversion={version}"
+        f"&lang=en&acceptformat=crx2,crx3"
+        f"&x=id%3D{extension_id}%26installsource%3Dondemand%26uc"
+    )
+
+
+def extract_crx_payload(data: bytes) -> bytes:
+    """Return the ZIP bytes embedded in a CRX2/CRX3 package (or passthrough ZIP)."""
+    if data[:2] == b"PK":
+        return data
+    if data[:4] != b"Cr24":
+        raise ValueError("Not a Chrome CRX or ZIP package")
+    if len(data) < 16:
+        raise ValueError("Truncated CRX header")
+    version = struct.unpack_from("<I", data, 4)[0]
+    if version == 2:
+        pubkey_len, sig_len = struct.unpack_from("<II", data, 8)
+        zip_start = 16 + pubkey_len + sig_len
+    elif version == 3:
+        header_size = struct.unpack_from("<I", data, 8)[0]
+        zip_start = 12 + header_size
+    else:
+        raise ValueError(f"Unsupported CRX version: {version}")
+    if zip_start >= len(data) or data[zip_start : zip_start + 2] != b"PK":
+        raise ValueError("CRX package missing ZIP payload")
+    return data[zip_start:]
+
+
+def download_extension_crx(extension_id: str, dest_crx: Path, *, timeout: float = 60.0) -> Path:
+    dest_crx.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    url = crx_download_url(extension_id)
+    request = urllib.request.Request(url, headers={"User-Agent": _CHROME_UA})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = response.read()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Chrome Web Store returned HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not download extension: {exc.reason}") from exc
+    if len(payload) < 64:
+        raise RuntimeError("Downloaded CRX is empty or truncated")
+    tmp = dest_crx.with_suffix(".tmp")
+    tmp.write_bytes(payload)
+    tmp.replace(dest_crx)
+    return dest_crx
+
+
+def unpack_crx(crx_path: Path, dest_dir: Path) -> Path:
+    """Unpack a CRX into dest_dir (replaced atomically). Returns dest_dir."""
+    zip_bytes = extract_crx_payload(crx_path.read_bytes())
+    parent = dest_dir.parent
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(dir=str(parent)) as tmp:
+        staging = Path(tmp) / "unpacked"
+        staging.mkdir()
+        zip_path = Path(tmp) / "ext.zip"
+        zip_path.write_bytes(zip_bytes)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(staging)
+        if not (staging / "manifest.json").exists():
+            raise RuntimeError("Unpacked extension has no manifest.json")
+        if dest_dir.exists():
+            shutil.rmtree(dest_dir)
+        shutil.move(str(staging), str(dest_dir))
+    return dest_dir
+
+
+def extension_install_dir(extension_id: str, *, root: Optional[Path] = None) -> Path:
+    base = Path(root) if root else EXTENSIONS_ROOT
+    return base / extension_id
+
+
+def is_extension_installed(extension_id: str, *, root: Optional[Path] = None) -> bool:
+    path = extension_install_dir(extension_id, root=root)
+    return path.is_dir() and (path / "manifest.json").is_file()
+
+
 class ChromeOpsProfile:
     """Dedicated Chrome user-data-dir for partner signup work."""
 
-    def __init__(self, root: Optional[Path] = None):
+    def __init__(
+        self,
+        root: Optional[Path] = None,
+        *,
+        extensions_root: Optional[Path] = None,
+    ):
         self.root = Path(root) if root else PROFILE_ROOT
+        self.extensions_root = (
+            Path(extensions_root) if extensions_root else EXTENSIONS_ROOT
+        )
         self.default_dir = self.root / "Default"
         self.setup_page = self.root / SETUP_PAGE_NAME
 
-    def ensure(self) -> Path:
+    def ensure(self, *, install_extensions: bool = True) -> Path:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.extensions_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             os.chmod(self.root, 0o700)
+            os.chmod(self.extensions_root, 0o700)
         except OSError:
             pass
         self.default_dir.mkdir(parents=True, exist_ok=True)
         self._write_preferences()
+        if install_extensions:
+            try:
+                self.install_extensions(force=False)
+            except Exception as exc:  # noqa: BLE001 — never block profile creation
+                logging.warning("Ops extension install skipped/failed: %s", exc)
         self._write_setup_page()
         self._write_first_run_sentinel()
         return self.root
@@ -152,26 +320,102 @@ class ChromeOpsProfile:
         session = prefs.setdefault("session", {})
         session["restore_on_startup"] = 5  # Open New Tab Page
 
+        # Prefer IPv4 / avoid leaking local interfaces via WebRTC when possible.
+        webrtc = prefs.setdefault("webrtc", {})
+        webrtc["ip_handling_policy"] = "disable_non_proxied_udp"
+
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(prefs, indent=2) + "\n", encoding="utf-8")
         tmp.replace(path)
 
-    def _write_setup_page(self) -> None:
+    def installed_extension_paths(self) -> List[Path]:
+        paths: List[Path] = []
+        for ext in RECOMMENDED_EXTENSIONS:
+            path = extension_install_dir(ext["id"], root=self.extensions_root)
+            if path.is_dir() and (path / "manifest.json").is_file():
+                paths.append(path)
+        return paths
+
+    def install_extensions(self, *, force: bool = False) -> Dict[str, Any]:
+        """
+        Download + unpack recommended CRXs into the local extensions desk.
+
+        Returns a status dict with per-extension ok/error and the load paths.
+        """
+        self.extensions_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        results: List[Dict[str, Any]] = []
+        for ext in RECOMMENDED_EXTENSIONS:
+            dest = extension_install_dir(ext["id"], root=self.extensions_root)
+            entry: Dict[str, Any] = {
+                "id": ext["id"],
+                "name": ext["name"],
+                "path": str(dest),
+            }
+            if not force and is_extension_installed(ext["id"], root=self.extensions_root):
+                entry["ok"] = True
+                entry["detail"] = "already installed"
+                results.append(entry)
+                continue
+            crx_path = self.extensions_root / f"{ext['id']}.crx"
+            try:
+                download_extension_crx(ext["id"], crx_path)
+                unpack_crx(crx_path, dest)
+                entry["ok"] = True
+                entry["detail"] = "installed"
+            except Exception as exc:  # noqa: BLE001 — collect per-ext failures
+                logging.warning("Failed to install %s (%s): %s", ext["name"], ext["id"], exc)
+                entry["ok"] = False
+                entry["detail"] = str(exc)
+            results.append(entry)
+
+        installed = [r for r in results if r.get("ok")]
+        failed = [r for r in results if not r.get("ok")]
+        summary = (
+            f"Installed {len(installed)}/{len(results)} ops extensions"
+            + (f" ({len(failed)} failed)" if failed else "")
+        )
+        # Refresh desk HTML so status badges stay current.
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            self._write_setup_page(install_results=results)
+        except OSError:
+            pass
+        return {
+            "ok": len(failed) == 0,
+            "detail": summary,
+            "extensions": results,
+            "load_paths": [r["path"] for r in installed],
+            "extensions_root": str(self.extensions_root),
+        }
+
+    def _write_setup_page(self, install_results: Optional[Sequence[Dict[str, Any]]] = None) -> None:
+        status_by_id: Dict[str, Dict[str, Any]] = {}
+        if install_results:
+            for row in install_results:
+                status_by_id[str(row.get("id"))] = row
         rows = []
         for ext in RECOMMENDED_EXTENSIONS:
-            badge = (
-                "Account creation"
-                if ext["category"] == "account_creation"
-                else "Identity protection"
-            )
+            badge = _CATEGORY_LABELS.get(ext["category"], ext["category"])
+            local = is_extension_installed(ext["id"], root=self.extensions_root)
+            status = status_by_id.get(ext["id"])
+            if status and not status.get("ok"):
+                state = f"Auto-install failed — use store link ({status.get('detail', 'error')})"
+                state_class = "warn"
+            elif local:
+                state = "Installed locally — loads with Ops Chrome"
+                state_class = "ok"
+            else:
+                state = "Not installed yet — click Install extensions in Settings"
+                state_class = "muted"
             rows.append(
                 f"""
 <article class="card">
   <div class="badge">{badge}</div>
   <h2>{ext['name']}</h2>
   <p>{ext['why']}</p>
+  <p class="state {state_class}">{state}</p>
   <a class="btn" href="{store_url(ext['id'])}" target="_blank" rel="noreferrer">
-    Install {ext['name']}
+    Chrome Web Store
   </a>
 </article>
 """
@@ -185,6 +429,7 @@ class ChromeOpsProfile:
     :root {{
       --bg: #e4e8e2; --card: #f7f8f5; --ink: #1a1f1a;
       --muted: #667066; --accent: #3a5f48; --border: #c5cdc0;
+      --ok: #2f6b45; --warn: #8a5a12;
     }}
     body {{
       margin: 0; font-family: "Avenir Next", "Segoe UI", sans-serif;
@@ -209,6 +454,10 @@ class ChromeOpsProfile:
     }}
     h2 {{ margin: 0 0 8px; font-size: 18px; }}
     p {{ margin: 0 0 14px; color: var(--muted); line-height: 1.4; font-size: 14px; }}
+    .state {{ font-size: 12px; margin: -6px 0 12px; }}
+    .state.ok {{ color: var(--ok); }}
+    .state.warn {{ color: var(--warn); }}
+    .state.muted {{ color: var(--muted); }}
     .btn {{
       display: inline-block; background: var(--accent); color: #f7f8f5;
       text-decoration: none; border-radius: 10px; padding: 10px 14px;
@@ -226,8 +475,9 @@ class ChromeOpsProfile:
     <h1>DOWNLOWd Ops Chrome</h1>
     <p class="lede">
       This browser profile is only for partner account creation.
-      Keep it signed out of your personal Google account. Install the
-      extensions below, then use Bitwarden Auto-fill for temporary signup items.
+      Keep it signed out of your personal Google account. DOWNLOWd auto-downloads
+      uBlock, fingerprint defenders, and Bitwarden into a local extensions desk
+      and loads them when Ops Chrome starts.
     </p>
     <div class="grid">
       {''.join(rows)}
@@ -237,7 +487,8 @@ class ChromeOpsProfile:
       <ul>
         <li>Do not sync a personal Google account here.</li>
         <li>Chrome password manager and autofill stay off — Bitwarden owns secrets.</li>
-        <li>Use Cookie Guardian so employee signup cookies do not linger.</li>
+        <li>uBlock + ClearURLs + Decentraleyes cut tracker noise on signup pages.</li>
+        <li>Canvas / WebRTC defenders reduce sticky browser fingerprints.</li>
         <li>After each employee, close extra tabs; DOWNLOWd can also reset site data.</li>
       </ul>
     </div>
@@ -259,16 +510,23 @@ class ChromeOpsProfile:
     def mark_extension_setup_opened(self) -> None:
         (self.root / ".extensions_setup_opened").write_text("1\n", encoding="utf-8")
 
+    def load_extension_arg(self) -> Optional[str]:
+        paths = self.installed_extension_paths()
+        if not paths:
+            return None
+        return "--load-extension=" + ",".join(str(p) for p in paths)
+
     def launch_args(
         self,
         *urls: str,
         extra_args: Optional[Sequence[str]] = None,
         new_window: bool = True,
+        install_extensions: bool = True,
     ) -> List[str]:
         chrome = find_chrome_binary()
         if not chrome:
             raise RuntimeError("Google Chrome / Chromium not found.")
-        self.ensure()
+        self.ensure(install_extensions=install_extensions)
         args = [
             chrome,
             f"--user-data-dir={self.root}",
@@ -278,6 +536,11 @@ class ChromeOpsProfile:
             "--disable-sync",
             "--disable-features=ChromeWhatsNewUI,PasswordManagerOnboarding",
         ]
+        load_arg = self.load_extension_arg()
+        if load_arg:
+            args.append(load_arg)
+            # Chromium otherwise disables --load-extension under some enterprise policies.
+            args.append("--disable-extensions-except=" + load_arg.split("=", 1)[1])
         if new_window:
             args.append("--new-window")
         if extra_args:
@@ -317,11 +580,15 @@ class ChromeOpsProfile:
     def selenium_options_kwargs(self) -> Dict[str, Any]:
         """Args to feed Chrome Options for AccountCreator."""
         self.ensure()
-        return {
+        kwargs: Dict[str, Any] = {
             "user_data_dir": str(self.root),
             "profile_directory": "Default",
             "binary": find_chrome_binary(),
         }
+        load_arg = self.load_extension_arg()
+        if load_arg:
+            kwargs["load_extension_arg"] = load_arg
+        return kwargs
 
     def clear_site_data(self) -> Dict[str, Any]:
         """
@@ -329,7 +596,7 @@ class ChromeOpsProfile:
 
         Leaves installed extensions and profile prefs intact. Close Chrome first.
         """
-        self.ensure()
+        self.ensure(install_extensions=False)
         removed: List[str] = []
         targets = [
             self.default_dir / "Cookies",

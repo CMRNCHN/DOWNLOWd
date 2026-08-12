@@ -1603,8 +1603,9 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 form,
                 text=(
-                    "Isolated browser for employee signups. Install Bitwarden + "
-                    "privacy extensions once, keep it signed out of personal Google."
+                    "Isolated browser for employee signups. Auto-installs Bitwarden, "
+                    "uBlock, fingerprint defenders, and related privacy tools. Keep it "
+                    "signed out of personal Google."
                 ),
                 font=F_CAPTION,
                 text_color=C["status"],
@@ -1614,6 +1615,8 @@ class Dashboard(ttk.Frame):
             ).pack(fill=tk.X, pady=(0, 8))
             chrome_row = ctk.CTkFrame(form, fg_color="transparent")
             chrome_row.pack(fill=tk.X, pady=(0, 4))
+            chrome_row2 = ctk.CTkFrame(form, fg_color="transparent")
+            chrome_row2.pack(fill=tk.X, pady=(0, 4))
 
             def open_ops_chrome() -> None:
                 from chrome_ops_profile import ChromeOpsProfile
@@ -1626,6 +1629,13 @@ class Dashboard(ttk.Frame):
 
                 result = ChromeOpsProfile().open_setup_desk()
                 self.status.set(result.get("detail") or ("Opened" if result.get("ok") else "Failed"))
+
+            def install_ops_extensions() -> None:
+                from chrome_ops_profile import ChromeOpsProfile
+
+                self.status.set("Downloading ops extensions…")
+                result = ChromeOpsProfile().install_extensions(force=True)
+                self.status.set(result.get("detail") or ("Done" if result.get("ok") else "Failed"))
 
             def clear_ops_site_data() -> None:
                 from chrome_ops_profile import ChromeOpsProfile
@@ -1655,6 +1665,14 @@ class Dashboard(ttk.Frame):
                 text="Clear site data",
                 command=clear_ops_site_data,
                 style="ghost",
+                height=34,
+                font=F_CAPTION,
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            _ui_button(
+                chrome_row2,
+                text="Install / refresh extensions",
+                command=install_ops_extensions,
+                style="primary",
                 height=34,
                 font=F_CAPTION,
             ).pack(side=tk.LEFT, fill=tk.X, expand=True)
