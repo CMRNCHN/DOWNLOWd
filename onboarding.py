@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from account_automation import AccountCreator, parse_confirmation
+from account_automation import AccountCreator, TemporaryAutofillManager, parse_confirmation
 from audit_logger import get_audit_logger
 from bw_import_converter import convert_file_to_bitwarden_json
 from data_retention import DataRetentionManager
@@ -240,15 +240,36 @@ class Onboarding:
             *,
             progress_label: str,
         ) -> bool:
+            autofill = TemporaryAutofillManager(self.bw_service)
             while True:
                 progress("accounts", progress_label)
                 result = create_fn(record["personal_data"], record["account_name"])
+                try:
+                    pushed = autofill.push(
+                        service,
+                        record["personal_data"],
+                        record["account_name"],
+                    )
+                    result = {**result, **pushed}
+                except Exception as exc:
+                    logging.warning(
+                        "Temp autofill push failed for %s/%s: %s",
+                        service,
+                        record["account_name"],
+                        exc,
+                    )
+                    result = {
+                        **result,
+                        "autofill_ready": False,
+                        "autofill_message": f"Could not push temp autofill profile: {exc}",
+                    }
                 decision = self._await_account_decision(
                     service,
                     record["employee"],
                     result,
                     account_confirmation_callback,
                 )
+                autofill.cleanup()
                 if decision == "retry":
                     reset_browser_session()
                     continue
@@ -465,15 +486,32 @@ class Onboarding:
                 callback()
 
         def run_service(service: str, create_fn: Any) -> bool:
+            autofill = TemporaryAutofillManager(self.bw_service)
             while True:
                 progress(service)
                 result = create_fn(personal_data, account_name)
+                try:
+                    pushed = autofill.push(service, personal_data, account_name)
+                    result = {**result, **pushed}
+                except Exception as exc:
+                    logging.warning(
+                        "Temp autofill push failed for %s/%s: %s",
+                        service,
+                        account_name,
+                        exc,
+                    )
+                    result = {
+                        **result,
+                        "autofill_ready": False,
+                        "autofill_message": f"Could not push temp autofill profile: {exc}",
+                    }
                 decision = self._await_account_decision(
                     service,
                     employee,
                     result,
                     account_confirmation_callback,
                 )
+                autofill.cleanup()
                 if decision == "retry":
                     reset_browser()
                     continue
