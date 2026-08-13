@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -83,6 +84,18 @@ class FakeBitwarden:
         return None
 
     def import_json(self, _payload, _collection):
+        return None
+
+    def create_item(self, payload):
+        return {"id": "fake-temp-item", "name": payload.get("name", "")}
+
+    def sync(self):
+        return None
+
+    def delete_item_permanently(self, _item_id):
+        return None
+
+    def trash_item(self, _item_id):
         return None
 
 
@@ -741,9 +754,9 @@ class AssistHelpersTests(unittest.TestCase):
             "password": "secret",
             "postal": "02139",
         }
-        with mock.patch("account_automation.webbrowser.open") as open_browser:
+        with mock.patch("account_automation.open_ops_browser", return_value={"ok": True, "detail": "ops"}) as open_ops:
             result = creator.create_marriott_account(personal, "adalovelace1815")
-        open_browser.assert_called_once()
+        open_ops.assert_called_once()
         self.assertEqual(result["status"], "manual_only")
         self.assertEqual(result["service"], "Marriott")
         self.assertEqual(result["filled_fields"], [])
@@ -751,6 +764,129 @@ class AssistHelpersTests(unittest.TestCase):
         self.assertIn("first_name: Ada", result["payload"])
         self.assertIn("postal: 02139", result["payload"])
         self.assertEqual(result["personal_data"]["confirm_password"], "secret")
+
+    def test_arrange_windows_reports_non_mac_clearly(self):
+        from account_automation import arrange_windows_for_assist
+
+        with mock.patch("account_automation.sys.platform", "linux"):
+            result = arrange_windows_for_assist()
+        self.assertFalse(result["ok"])
+        self.assertIn("macOS", result["detail"])
+
+    def test_temp_autofill_payload_links_site_field_names(self):
+        from account_automation import (
+            TemporaryAutofillManager,
+            build_temp_autofill_payload,
+        )
+
+        personal = {
+            "first_name": "Cameron",
+            "last_name": "Cohen",
+            "email": "cameroncohen1994@outlook.com",
+            "username": "cameroncohen1994",
+            "password": "DemoPass1!",
+            "postal": "20002",
+        }
+        outlook = build_temp_autofill_payload("Outlook", personal, "cameroncohen1994")
+        self.assertTrue(outlook["payload"]["name"].startswith("DOWNLOWD · TEMP · Outlook"))
+        self.assertEqual(outlook["payload"]["login"]["username"], "cameroncohen1994")
+        field_names = {f["name"] for f in outlook["payload"]["fields"]}
+        self.assertIn("MemberName", field_names)
+        self.assertIn("usernameInput", field_names)
+
+        marriott = build_temp_autofill_payload("Marriott", personal, "cameroncohen1994")
+        marriott_names = {f["name"] for f in marriott["payload"]["fields"]}
+        self.assertIn("firstName", marriott_names)
+        self.assertIn("postalCode", marriott_names)
+        self.assertIn("confirmPassword", marriott_names)
+
+        bw = mock.Mock()
+        bw.create_item.return_value = {"id": "temp-1"}
+        manager = TemporaryAutofillManager(bw)
+        pushed = manager.push("Hyatt", personal, "cameroncohen1994")
+        self.assertTrue(pushed["autofill_ready"])
+        self.assertEqual(pushed["autofill_item_id"], "temp-1")
+        self.assertIn("firstName", pushed["autofill_linked_fields"])
+        bw.sync.assert_called()
+        removed = manager.cleanup()
+        self.assertEqual(removed, ["temp-1"])
+        bw.delete_item_permanently.assert_called_once_with("temp-1")
+
+    def test_chrome_ops_profile_writes_setup_desk_and_privacy_prefs(self):
+        from chrome_ops_profile import ChromeOpsProfile, RECOMMENDED_EXTENSIONS
+
+        with tempfile.TemporaryDirectory() as directory:
+            profile = ChromeOpsProfile(
+                Path(directory) / "ops",
+                extensions_root=Path(directory) / "exts",
+            )
+            root = profile.ensure(install_extensions=False)
+            self.assertTrue(root.exists())
+            prefs = json.loads((profile.default_dir / "Preferences").read_text(encoding="utf-8"))
+            self.assertEqual(prefs["profile"]["name"], "DOWNLOWd Ops")
+            self.assertFalse(prefs["credentials_enable_service"])
+            self.assertFalse(prefs["autofill"]["profile_enabled"])
+            self.assertEqual(prefs["webrtc"]["ip_handling_policy"], "disable_non_proxied_udp")
+            html = profile.setup_page.read_text(encoding="utf-8")
+            self.assertIn("Bitwarden", html)
+            self.assertIn("uBlock Origin", html)
+            self.assertIn("Canvas Fingerprint Defender", html)
+            self.assertIn("WebRTC Control", html)
+            for ext in RECOMMENDED_EXTENSIONS:
+                self.assertIn(ext["id"], html)
+            cleared = profile.clear_site_data()
+            self.assertTrue(cleared["ok"])
+
+    def test_chrome_ops_crx_unpack_and_load_extension_arg(self):
+        import zipfile
+
+        from chrome_ops_profile import (
+            ChromeOpsProfile,
+            extract_crx_payload,
+            unpack_crx,
+        )
+
+        # Minimal CRX3: Cr24 + version 3 + empty header + zip with manifest.
+        manifest = b'{"name":"Test Ext","version":"1.0","manifest_version":3}'
+        buf = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+        try:
+            with zipfile.ZipFile(buf, "w") as zf:
+                zf.writestr("manifest.json", manifest)
+            buf.close()
+            zip_bytes = Path(buf.name).read_bytes()
+        finally:
+            Path(buf.name).unlink(missing_ok=True)
+
+        header_size = 0
+        crx = b"Cr24" + struct.pack("<II", 3, header_size) + zip_bytes
+        self.assertEqual(extract_crx_payload(crx), zip_bytes)
+        self.assertEqual(extract_crx_payload(zip_bytes), zip_bytes)
+
+        with tempfile.TemporaryDirectory() as directory:
+            crx_path = Path(directory) / "test.crx"
+            crx_path.write_bytes(crx)
+            dest = Path(directory) / "unpacked"
+            unpack_crx(crx_path, dest)
+            self.assertTrue((dest / "manifest.json").exists())
+
+            # Seed one recommended id so load_extension_arg picks it up.
+            from chrome_ops_profile import RECOMMENDED_EXTENSIONS
+
+            ext_id = RECOMMENDED_EXTENSIONS[0]["id"]
+            profile = ChromeOpsProfile(
+                Path(directory) / "ops",
+                extensions_root=Path(directory) / "exts",
+            )
+            installed = Path(directory) / "exts" / ext_id
+            installed.mkdir(parents=True)
+            (installed / "manifest.json").write_text('{"name":"x","version":"1","manifest_version":3}', encoding="utf-8")
+            arg = profile.load_extension_arg()
+            self.assertIsNotNone(arg)
+            self.assertTrue(arg.startswith("--load-extension="))
+            self.assertIn(str(installed), arg)
+            args = profile.launch_args("https://example.com", install_extensions=False)
+            self.assertTrue(any(a.startswith("--load-extension=") for a in args))
+            self.assertTrue(any(a.startswith("--disable-extensions-except=") for a in args))
 
 
 class BitwardenItemApiTests(unittest.TestCase):

@@ -43,6 +43,7 @@ py-modules = [
     "employee_profiles",
     "audit_logger",
     "account_automation",
+    "chrome_ops_profile",
     "hq_template",
     "secure_delete",
 ]

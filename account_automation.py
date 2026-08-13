@@ -13,6 +13,8 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Any, Dict, List, Optional, Tuple
 
+from chrome_ops_profile import ChromeOpsProfile, find_chrome_binary, open_ops_browser
+
 try:
     from selenium import webdriver
     from selenium.common.exceptions import NoSuchElementException, WebDriverException
@@ -180,6 +182,102 @@ def paste_field_value(value: str) -> bool:
         return False
 
 
+def arrange_windows_for_assist(
+    *,
+    app_title: str = "DOWNLOWd",
+    browser_apps: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Best-effort side-by-side layout: DOWNLOWd left, browser right (macOS).
+
+    Embedding a live browser inside Tk is not supported; this keeps both
+    visible so the operator can watch signup while using the field companion.
+    """
+    result: Dict[str, Any] = {"ok": False, "platform": sys.platform, "detail": ""}
+    if sys.platform != "darwin":
+        result["detail"] = "Side-by-side arrange is implemented for macOS only."
+        return result
+    browsers = browser_apps or ["Google Chrome", "Safari", "Microsoft Edge", "Arc"]
+    browser_list = ", ".join(f'"{name}"' for name in browsers)
+    script = f'''
+tell application "System Events"
+  set screenW to item 1 of (size of (first window of process "Finder" whose role description is "window"))
+end tell
+try
+  tell application "Finder"
+    set screenBounds to bounds of window of desktop
+    set screenW to item 3 of screenBounds
+    set screenH to item 4 of screenBounds
+  end tell
+on error
+  set screenW to 1440
+  set screenH to 900
+end try
+set gap to 12
+set leftW to (screenW * 0.38) as integer
+set rightX to leftW + gap
+set rightW to screenW - rightX - gap
+try
+  tell application "{app_title}" to activate
+end try
+tell application "System Events"
+  if exists (process "{app_title}") then
+    tell process "{app_title}"
+      set frontmost to true
+      try
+        set position of front window to {{gap, 40}}
+        set size of front window to {{leftW, screenH - 80}}
+      end try
+    end tell
+  end if
+end tell
+set browserName to ""
+repeat with candidate in {{{browser_list}}}
+  tell application "System Events"
+    if exists (process (candidate as text)) then
+      set browserName to candidate as text
+      exit repeat
+    end if
+  end tell
+end repeat
+if browserName is "" then
+  return "no_browser"
+end if
+tell application "System Events"
+  tell process browserName
+    set frontmost to true
+    try
+      set position of front window to {{rightX, 40}}
+      set size of front window to {{rightW, screenH - 80}}
+    end try
+  end tell
+end tell
+return browserName
+'''
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+        )
+        out = (proc.stdout or "").strip()
+        if proc.returncode != 0:
+            result["detail"] = (proc.stderr or out or "osascript failed").strip()
+            return result
+        if out == "no_browser":
+            result["detail"] = "No Chrome/Safari/Edge window open yet."
+            return result
+        result["ok"] = True
+        result["browser"] = out
+        result["detail"] = f"Arranged {app_title} left, {out} right."
+        return result
+    except Exception as exc:
+        result["detail"] = str(exc)
+        return result
+
+
 def parse_confirmation(result: Any) -> str:
     """Normalize callback returns to done | skip | retry."""
     if result is True:
@@ -223,12 +321,25 @@ class AccountCreator:
             options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
-        options.add_argument("--incognito")
         options.add_argument("--window-size=1280,900")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        if sys.platform == "darwin" and os.path.exists(chrome_bin):
+        # Dedicated ops profile (extensions + no personal Google sync).
+        # Skip --incognito so Bitwarden / privacy extensions from this profile load.
+        ops = ChromeOpsProfile()
+        ops.ensure()
+        options.add_argument(f"--user-data-dir={ops.root}")
+        options.add_argument("--profile-directory=Default")
+        options.add_argument("--no-first-run")
+        options.add_argument("--disable-sync")
+        load_arg = ops.load_extension_arg()
+        if load_arg:
+            options.add_argument(load_arg)
+            options.add_argument(
+                "--disable-extensions-except=" + load_arg.split("=", 1)[1]
+            )
+        chrome_bin = find_chrome_binary()
+        if chrome_bin:
             options.binary_location = chrome_bin
         return options
 
@@ -381,20 +492,26 @@ class AccountCreator:
         message: Optional[str] = None,
     ) -> Dict[str, Any]:
         data, payload, copied = self._prepare_payload(service, personal_data, account_name)
-        try:
-            webbrowser.open(signup_url)
-        except Exception as e:
-            return {
-                "service": service,
-                "status": "error",
-                "error": str(e),
-                "url": signup_url,
-                "account_name": account_name,
-                "personal_data": data,
-                "payload": payload,
-                "filled_fields": [],
-                "clipboard_prepared": copied,
-            }
+        launched = open_ops_browser(signup_url, setup_if_needed=True)
+        if not launched.get("ok"):
+            try:
+                webbrowser.open(signup_url)
+                launched = {
+                    "ok": True,
+                    "detail": f"Ops Chrome unavailable ({launched.get('detail')}); used default browser.",
+                }
+            except Exception as e:
+                return {
+                    "service": service,
+                    "status": "error",
+                    "error": str(e),
+                    "url": signup_url,
+                    "account_name": account_name,
+                    "personal_data": data,
+                    "payload": payload,
+                    "filled_fields": [],
+                    "clipboard_prepared": copied,
+                }
         return {
             "service": service,
             "status": status,
@@ -405,10 +522,12 @@ class AccountCreator:
             "filled_fields": [],
             "clipboard_prepared": copied,
             "assist_fields": list(ASSIST_FIELD_KEYS),
+            "ops_chrome": launched,
             "message": message
             or (
-                "Opened signup in the system browser. Use the assist panel "
-                "(⌘1–⌘6) to paste fields. Complete captcha and submit yourself."
+                "Opened signup in the DOWNLOWd Ops Chrome profile. "
+                "Use Bitwarden Auto-fill on the TEMP item, or Paste from the companion. "
+                "Complete captcha and submit yourself."
             ),
         }
 
@@ -432,7 +551,7 @@ class AccountCreator:
                 if not _SELENIUM_AVAILABLE
                 else "no chromedriver / Selenium disabled"
             )
-            logging.info("%s: %s; using system browser handoff", service, reason)
+            logging.info("%s: %s; using Ops Chrome handoff", service, reason)
             return self._handoff(
                 service,
                 signup_url,
@@ -440,7 +559,7 @@ class AccountCreator:
                 account_name,
                 status="manual_only",
                 message=(
-                    f"{reason}. System browser opened; use the assist panel "
+                    f"{reason}. Ops Chrome opened; use Bitwarden Auto-fill or the assist companion "
                     "(⌘1–⌘6) to paste fields."
                 ),
             )
@@ -463,7 +582,7 @@ class AccountCreator:
                     account_name,
                     status="bot_blocked",
                     message=(
-                        "Signup page blocked automated Chrome. Opened system browser; "
+                        "Signup page blocked automated Chrome. Opened Ops Chrome; "
                         "use the assist panel (⌘1–⌘6) to paste fields."
                     ),
                 )
@@ -483,7 +602,7 @@ class AccountCreator:
                     status="bot_blocked",
                     message=(
                         "No fillable form found (likely bot protection). "
-                        "System browser opened; use the assist panel."
+                        "Ops Chrome opened; use Bitwarden Auto-fill or Paste."
                     ),
                 )
 
@@ -502,7 +621,7 @@ class AccountCreator:
                     account_name,
                     status="manual_only",
                     message=(
-                        "Could not autofill any fields. System browser opened; "
+                        "Could not autofill any fields. Ops Chrome opened; "
                         "use the assist panel (⌘1–⌘6)."
                     ),
                 )
@@ -534,7 +653,7 @@ class AccountCreator:
                 data,
                 account_name,
                 status="manual_only",
-                message=f"Chrome automation failed ({e}). System browser opened; use assist panel.",
+                message=f"Chrome automation failed ({e}). Ops Chrome opened; use assist panel.",
             )
 
     def create_outlook_account(self, personal_data: Dict[str, str], account_name: str) -> Dict[str, Any]:
@@ -685,3 +804,154 @@ class AccountCreator:
                 "marriott": self.create_marriott_account(personal_data, account_name),
             },
         }
+
+
+# Custom field *names* mirror HTML name/id attributes on each signup form so the
+# Bitwarden browser extension can match them during Auto-fill.
+# match: 0 Domain, 1 Host, 2 StartsWith, 3 Exact
+SITE_AUTOFILL_SPECS: Dict[str, Dict[str, Any]] = {
+    "Outlook": {
+        "urls": ["https://signup.live.com/"],
+        "match": 2,
+        "username_key": "username",
+        "password_key": "password",
+        "custom_fields": [
+            ("MemberName", "username", 0),
+            ("usernameInput", "username", 0),
+            ("loginfmt", "email", 0),
+            ("i0116", "email", 0),
+            ("email", "email", 0),
+        ],
+    },
+    "Hyatt": {
+        "urls": [
+            "https://www.hyatt.com/en-US/member/enroll",
+            "https://www.hyatt.com/",
+        ],
+        "match": 1,
+        "username_key": "email",
+        "password_key": "password",
+        "custom_fields": [
+            ("firstName", "first_name", 0),
+            ("lastName", "last_name", 0),
+            ("email", "email", 0),
+            ("password", "password", 1),
+            ("confirmPassword", "confirm_password", 1),
+        ],
+    },
+    "Marriott": {
+        "urls": [
+            "https://www.marriott.com/loyalty/createAccount/createAccountPage1.mi",
+            "https://www.marriott.com/",
+        ],
+        "match": 1,
+        "username_key": "email",
+        "password_key": "password",
+        "custom_fields": [
+            ("firstName", "first_name", 0),
+            ("lastName", "last_name", 0),
+            ("email", "email", 0),
+            ("password", "password", 1),
+            ("confirmPassword", "confirm_password", 1),
+            ("passwordConfirm", "confirm_password", 1),
+            ("postalCode", "postal", 0),
+            ("zipCode", "postal", 0),
+        ],
+    },
+}
+
+
+def build_temp_autofill_payload(
+    service: str,
+    personal_data: Dict[str, str],
+    account_name: str,
+) -> Dict[str, Any]:
+    """Build a temporary Bitwarden login item shaped for site autofill."""
+    spec = SITE_AUTOFILL_SPECS.get(service)
+    if not spec:
+        raise KeyError(f"No autofill spec for {service}")
+    data = normalize_personal_data(personal_data)
+    username = data.get(spec["username_key"], "") or data.get("email") or data.get("username", "")
+    password = data.get(spec["password_key"], "") or data.get("password", "")
+    fields = []
+    linked = []
+    for field_name, data_key, field_type in spec["custom_fields"]:
+        value = data.get(data_key, "")
+        if not value:
+            continue
+        fields.append({"name": field_name, "value": value, "type": field_type})
+        linked.append(field_name)
+    uris = [{"uri": url, "match": spec["match"]} for url in spec["urls"]]
+    payload = {
+        "type": 1,
+        "name": f"DOWNLOWD · TEMP · {service} · {account_name}",
+        "notes": (
+            "Temporary signup autofill profile created by DOWNLOWd. "
+            "Safe to delete after the account exists."
+        ),
+        "favorite": True,
+        "fields": fields,
+        "login": {
+            "username": username,
+            "password": password,
+            "totp": None,
+            "uris": uris,
+        },
+    }
+    return {"payload": payload, "linked_fields": linked, "urls": list(spec["urls"])}
+
+
+class TemporaryAutofillManager:
+    """Push short-lived Bitwarden login items the browser extension can autofill."""
+
+    def __init__(self, bitwarden: Any):
+        self.bitwarden = bitwarden
+        self._temp_item_ids: List[str] = []
+
+    def push(
+        self,
+        service: str,
+        personal_data: Dict[str, str],
+        account_name: str,
+    ) -> Dict[str, Any]:
+        built = build_temp_autofill_payload(service, personal_data, account_name)
+        item = self.bitwarden.create_item(built["payload"])
+        item_id = str(item.get("id") or "")
+        if item_id:
+            self._temp_item_ids.append(item_id)
+        try:
+            self.bitwarden.sync()
+        except Exception:
+            logging.warning("Bitwarden sync after temp autofill create failed", exc_info=True)
+        linked = built["linked_fields"]
+        return {
+            "autofill_item_id": item_id,
+            "autofill_linked_fields": linked,
+            "autofill_urls": built["urls"],
+            "autofill_ready": bool(item_id),
+            "autofill_message": (
+                f"Temporary Bitwarden autofill profile ready ({len(linked)} linked fields). "
+                "In the browser extension: open the signup page → Auto-fill "
+                f"“DOWNLOWD · TEMP · {service}”."
+            ),
+        }
+
+    def cleanup(self) -> List[str]:
+        removed: List[str] = []
+        for item_id in list(self._temp_item_ids):
+            try:
+                self.bitwarden.delete_item_permanently(item_id)
+                removed.append(item_id)
+            except Exception:
+                try:
+                    self.bitwarden.trash_item(item_id)
+                    removed.append(item_id)
+                except Exception:
+                    logging.warning("Failed to remove temp autofill item %s", item_id, exc_info=True)
+        self._temp_item_ids = [i for i in self._temp_item_ids if i not in removed]
+        if removed:
+            try:
+                self.bitwarden.sync()
+            except Exception:
+                logging.warning("Bitwarden sync after temp autofill cleanup failed", exc_info=True)
+        return removed
