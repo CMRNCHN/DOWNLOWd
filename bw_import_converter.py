@@ -22,10 +22,14 @@ def strip_rtf_to_text(raw: str) -> str:
     Best-effort RTF → plain text for TextEdit-style HQ exports.
 
     Unescapes \\_ \\{ \\} \\\\, drops control words/groups noise, keeps pipe rows.
+    Backslash-newline is a paragraph break (RTF spec / TextEdit Return), not a join.
     """
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
-    # RTF line continuation: trailing \<newline> joins soft-wrapped lines.
-    text = re.sub(r"\\\n", "", text)
+    # RTF spec: backslash + newline is a paragraph break (\par). TextEdit/Cocoa
+    # writes Return this way; joining those lines concatenates HQ pipe rows.
+    text = re.sub(r"\\\n", r"\\par ", text)
+    # Remaining bare newlines are optional RTF source wrapping, not document breaks.
+    text = text.replace("\n", "")
     text = text.replace("\\_", "_").replace("\\{", "{").replace("\\}", "}")
     text = text.replace("\\\\", "\x00")  # preserve literal backslash
     # Paragraph / soft line breaks become real newlines before controls are dropped.
