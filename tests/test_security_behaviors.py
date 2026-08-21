@@ -613,6 +613,31 @@ class OnboardingTests(unittest.TestCase):
             self.assertEqual(employees[0]["first_name"], "Ada")
             self.assertEqual(len(items), 3)
 
+    def test_textedit_backslash_newline_rtf_keeps_hq_rows(self):
+        # macOS TextEdit writes Return as "\<newline>", not \line / \par.
+        rtf = (
+            "{\\rtf1\\ansi\\ansicpg1252\\cocoartf2820\n"
+            "{\\fonttbl\\f0\\fswiss\\fcharset0 Helvetica;}\n"
+            "\\f0\\fs24 \\cf0 n_id|firstname|lastname|dob|cc|cvv|expmonth|expyear|email\\\n"
+            "99|Ada|Lovelace|12/10/1815|4111111111111111|123|04|2030|ada@example.com}\n"
+        )
+        plain = strip_rtf_to_text(rtf)
+        self.assertIn("n_id|firstname|lastname", plain)
+        self.assertIn("Ada|Lovelace", plain)
+        self.assertNotIn("email99", plain)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "HQ-882920.rtf"
+            source.write_text(rtf, encoding="utf-8")
+            converter = BitwardenConverter(source, root / "output.json", "password")
+            items, employees = converter._process_input_file()
+            self.assertEqual(len(employees), 1)
+            self.assertEqual(employees[0]["first_name"], "Ada")
+            self.assertEqual(len(items), 3)
+            card = next(item for item in items if item["type"] == 3)
+            self.assertEqual(card["card"]["number"], "4111111111111111")
+            self.assertEqual(card["card"]["code"], "123")
+
     def test_failed_import_disposes_generated_json_but_keeps_source(self):
         audit = FakeAudit()
         disposed = []
