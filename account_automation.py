@@ -65,17 +65,24 @@ _BOT_MARKERS = (
 
 
 def copy_to_clipboard(text: str) -> bool:
-    """Best-effort clipboard copy (macOS pbcopy / Linux xclip)."""
+    """Best-effort clipboard copy (macOS pbcopy / Linux xclip or xsel)."""
+    from shutil import which
+
     try:
         if sys.platform == "darwin":
             proc = subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
             return proc.returncode == 0
-        proc = subprocess.run(
+        # X11: prefer xclip, fall back to xsel so a stock desktop still works.
+        for cmd in (
             ["xclip", "-selection", "clipboard"],
-            input=text.encode("utf-8"),
-            check=True,
-        )
-        return proc.returncode == 0
+            ["xsel", "--clipboard", "--input"],
+        ):
+            if which(cmd[0]) is None:
+                continue
+            proc = subprocess.run(cmd, input=text.encode("utf-8"), check=True)
+            return proc.returncode == 0
+        logging.warning("No clipboard tool found (install xclip or xsel).")
+        return False
     except Exception:
         return False
 
@@ -154,30 +161,48 @@ def assist_field_value(personal_data: Dict[str, str], field_key: str) -> str:
 
 def paste_field_value(value: str) -> bool:
     """
-    Copy `value` to the clipboard and Cmd+V into the frontmost app (macOS).
+    Copy `value` to the clipboard and synthesize a paste into the frontmost app.
 
-    Requires Accessibility permission for DOWNLOWd / Terminal / Python.
+    macOS uses AppleScript (needs Accessibility permission); X11/Linux uses
+    xdotool. When no paste tool is available the value is still on the clipboard
+    so the operator can paste it manually.
     """
     if not value:
         return False
     if not _copy_to_clipboard(value):
         return False
-    if sys.platform != "darwin":
-        return True
-    script = (
-        'tell application "System Events" to keystroke "v" using command down'
-    )
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5,
+    if sys.platform == "darwin":
+        script = (
+            'tell application "System Events" to keystroke "v" using command down'
         )
-        return proc.returncode == 0
-    except Exception:
-        return False
+        try:
+            proc = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            return proc.returncode == 0
+        except Exception:
+            return False
+    # X11/Linux: send Ctrl+V to the focused window via xdotool when present.
+    from shutil import which
+
+    if which("xdotool") is not None:
+        try:
+            proc = subprocess.run(
+                ["xdotool", "key", "--clearmodifiers", "ctrl+v"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            return proc.returncode == 0
+        except Exception:
+            return False
+    # Clipboard is populated; caller can paste manually.
+    return True
 
 
 def parse_confirmation(result: Any) -> str:
@@ -192,6 +217,25 @@ def parse_confirmation(result: Any) -> str:
     if text in {"retry", "again"}:
         return "retry"
     return "skip"
+
+
+# Default partner signup endpoints. Each can be overridden with an env var
+# (e.g. DOWNLOWD_OUTLOOK_URL) to target a staging/self-hosted signup page or to
+# run the flow end-to-end in tests without hitting the live, bot-walled sites.
+SIGNUP_URLS: Dict[str, Tuple[str, str]] = {
+    "Outlook": ("DOWNLOWD_OUTLOOK_URL", "https://signup.live.com/"),
+    "Hyatt": ("DOWNLOWD_HYATT_URL", "https://www.hyatt.com/en-US/member/enroll"),
+    "Marriott": (
+        "DOWNLOWD_MARRIOTT_URL",
+        "https://www.marriott.com/loyalty/createAccount/createAccountPage1.mi",
+    ),
+}
+
+
+def signup_url(service: str) -> str:
+    """Resolve a partner signup URL, honoring a per-service env override."""
+    env_key, default = SIGNUP_URLS.get(service, ("", ""))
+    return (os.environ.get(env_key) or default) if env_key else default
 
 
 def _chromedriver_on_path() -> bool:
@@ -540,9 +584,7 @@ class AccountCreator:
     def create_outlook_account(self, personal_data: Dict[str, str], account_name: str) -> Dict[str, Any]:
         logging.info("Starting Outlook account creation for %s", account_name)
         data = normalize_personal_data(personal_data)
-        # Outlook step 1 wants the local part or full email in MemberName.
-        if data.get("username") and "@" not in data["username"]:
-            data = {**data, "username": data["username"]}
+        # Outlook step 1 accepts either the local part or the full email in MemberName.
         field_map = {
             "username": [
                 (By.NAME, "MemberName"),
@@ -560,7 +602,7 @@ class AccountCreator:
         }
         return self._prefill_or_handoff(
             "Outlook",
-            "https://signup.live.com/",
+            signup_url("Outlook"),
             data,
             account_name,
             field_map,
@@ -603,7 +645,7 @@ class AccountCreator:
         }
         return self._prefill_or_handoff(
             "Hyatt",
-            "https://www.hyatt.com/en-US/member/enroll",
+            signup_url("Hyatt"),
             data,
             account_name,
             field_map,
@@ -670,7 +712,7 @@ class AccountCreator:
         }
         return self._prefill_or_handoff(
             "Marriott",
-            "https://www.marriott.com/loyalty/createAccount/createAccountPage1.mi",
+            signup_url("Marriott"),
             data,
             account_name,
             field_map,
