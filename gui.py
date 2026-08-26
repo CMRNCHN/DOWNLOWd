@@ -76,24 +76,25 @@ else:
     UI_DISPLAY = "Helvetica Neue"
     MONO = "Menlo"
 
-# macOS system light palette: layered grays, hairline borders, system blue.
+# shadcn-inspired neutral palette: zinc grays, hairline borders, a single
+# near-black primary (no sporadic accent-blue), muted secondaries.
 C = {
-    "bg": "#e8e8ed",
-    "surface": "#f2f2f7",
-    "card": "#ffffff",
-    "card_hi": "#e7e7ee",
-    "border": "#d6d6db",
-    "text": "#1d1d1f",
-    "muted": "#6e6e73",
-    "accent": "#007aff",
-    "accent_hover": "#0063d1",
-    "accent_dim": "#e5f0ff",
-    "success": "#34c759",
-    "warn": "#ff9f0a",
-    "danger": "#ff3b30",
-    "ink": "#1d1d1f",
-    "paper": "#ffffff",
-    "status": "#8a8a8e",
+    "bg": "#f4f4f5",        # zinc-100  app background
+    "surface": "#f4f4f5",   # zinc-100  secondary / muted panels
+    "card": "#ffffff",      # white     cards & popovers
+    "card_hi": "#e4e4e7",   # zinc-200  hover
+    "border": "#e4e4e7",    # zinc-200  hairline border
+    "text": "#18181b",      # zinc-900  foreground
+    "muted": "#71717a",     # zinc-500  muted foreground
+    "accent": "#18181b",    # zinc-900  primary
+    "accent_hover": "#27272a",  # zinc-800  primary hover
+    "accent_dim": "#f4f4f5",    # zinc-100  subtle selection tint
+    "success": "#16a34a",   # green-600
+    "warn": "#f59e0b",      # amber-500
+    "danger": "#ef4444",    # red-500
+    "ink": "#18181b",       # zinc-900  (dark text / marks)
+    "paper": "#ffffff",     # white     (text on primary)
+    "status": "#71717a",    # zinc-500
 }
 
 F_DISPLAY = (UI_DISPLAY, 22, "bold")
@@ -939,10 +940,12 @@ class Dashboard(ttk.Frame):
             width=76,
             height=34,
             corner_radius=8,
-            fg_color=C["accent"],
-            hover_color=C["accent_hover"],
-            text_color=C["paper"],
-            font=(UI, 13, "bold"),
+            fg_color=C["card"],
+            hover_color=C["surface"],
+            text_color=C["text"],
+            border_width=1,
+            border_color=C["border"],
+            font=(UI, 13),
         ).pack(side=tk.LEFT, padx=(0, 8))
         ctk.CTkButton(
             actions,
@@ -951,9 +954,11 @@ class Dashboard(ttk.Frame):
             width=88,
             height=34,
             corner_radius=8,
-            fg_color=C["surface"],
-            hover_color=C["card_hi"],
+            fg_color=C["card"],
+            hover_color=C["surface"],
             text_color=C["text"],
+            border_width=1,
+            border_color=C["border"],
             font=(UI, 13),
         ).pack(side=tk.LEFT)
 
@@ -1005,6 +1010,8 @@ class Dashboard(ttk.Frame):
             people,
             fg_color="transparent",
             corner_radius=0,
+            scrollbar_button_color=C["border"],
+            scrollbar_button_hover_color=C["muted"],
         )
         self.employee_scroll.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
         self.employee_grid = self.employee_scroll
@@ -1030,9 +1037,11 @@ class Dashboard(ttk.Frame):
             command=self._browse_files,
             height=34,
             corner_radius=8,
-            fg_color=C["surface"],
-            hover_color=C["card_hi"],
+            fg_color=C["card"],
+            hover_color=C["surface"],
             text_color=C["text"],
+            border_width=1,
+            border_color=C["border"],
             font=(UI, 12),
         ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         ctk.CTkButton(
@@ -1081,10 +1090,12 @@ class Dashboard(ttk.Frame):
             width=64,
             height=30,
             corner_radius=8,
-            fg_color=C["accent"],
-            hover_color=C["accent_hover"],
-            text_color=C["paper"],
-            font=(UI, 12, "bold"),
+            fg_color=C["card"],
+            hover_color=C["surface"],
+            text_color=C["text"],
+            border_width=1,
+            border_color=C["border"],
+            font=(UI, 12),
             state=tk.DISABLED,
         )
         self.profile_edit_button.pack(side=tk.RIGHT)
@@ -1126,6 +1137,8 @@ class Dashboard(ttk.Frame):
             profile_card,
             fg_color=C["surface"],
             corner_radius=10,
+            scrollbar_button_color=C["border"],
+            scrollbar_button_hover_color=C["muted"],
         )
         self.profile_viewer.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
         self._render_profile_viewer("Select an employee to load their vault profile.")
@@ -1169,9 +1182,11 @@ class Dashboard(ttk.Frame):
                 command=command,
                 height=38,
                 corner_radius=8,
-                fg_color=C["surface"],
-                hover_color=C["card_hi"],
+                fg_color=C["card"],
+                hover_color=C["surface"],
                 text_color=C["text"],
+                border_width=1,
+                border_color=C["border"],
                 font=(UI, 12),
             ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3)
 
@@ -1183,9 +1198,11 @@ class Dashboard(ttk.Frame):
             command=self._restore_selected_profile,
             height=34,
             corner_radius=8,
-            fg_color=C["surface"],
-            hover_color=C["card_hi"],
+            fg_color=C["card"],
+            hover_color=C["surface"],
             text_color=C["text"],
+            border_width=1,
+            border_color=C["border"],
             font=(UI, 12),
             state=tk.DISABLED,
         )
@@ -1424,7 +1441,7 @@ class Dashboard(ttk.Frame):
 
     def _open_settings_modal(self):
         def build(host: ctk.CTkFrame) -> None:
-            form = ctk.CTkScrollableFrame(host, fg_color="transparent")
+            form = ctk.CTkScrollableFrame(host, fg_color="transparent", scrollbar_button_color=C["border"], scrollbar_button_hover_color=C["muted"])
             form.pack(fill=tk.BOTH, expand=True)
 
             def labeled_entry(label: str, var: tk.Variable, show: str = "") -> None:
@@ -1499,7 +1516,7 @@ class Dashboard(ttk.Frame):
                 corner_radius=10,
                 fg_color=C["surface"],
                 button_color=C["card_hi"],
-                button_hover_color="#dedee2",
+                button_hover_color=C["card_hi"],
                 text_color=C["text"],
                 dropdown_fg_color=C["card"],
                 font=(UI, 11),
@@ -1519,7 +1536,7 @@ class Dashboard(ttk.Frame):
                 corner_radius=10,
                 fg_color=C["surface"],
                 button_color=C["card_hi"],
-                button_hover_color="#dedee2",
+                button_hover_color=C["card_hi"],
                 text_color=C["text"],
                 dropdown_fg_color=C["card"],
                 font=(UI, 11),
@@ -1653,8 +1670,8 @@ class Dashboard(ttk.Frame):
             exists = key in self.profile_bundle
             try:
                 button.configure(
-                    fg_color=C["accent"] if key == role else "transparent",
-                    text_color="#ffffff" if key == role else (C["text"] if exists else C["muted"]),
+                    fg_color=C["card"] if key == role else "transparent",
+                    text_color=C["text"] if key == role else (C["text"] if exists else C["muted"]),
                 )
             except tk.TclError:
                 pass
@@ -1913,7 +1930,7 @@ class Dashboard(ttk.Frame):
         err = tk.StringVar()
 
         def build(host: ctk.CTkFrame) -> None:
-            form = ctk.CTkScrollableFrame(host, fg_color="transparent")
+            form = ctk.CTkScrollableFrame(host, fg_color="transparent", scrollbar_button_color=C["border"], scrollbar_button_hover_color=C["muted"])
             form.pack(fill=tk.BOTH, expand=True)
             variables: Dict[str, tk.StringVar] = {}
             for label, key in fields:
@@ -2158,7 +2175,7 @@ class Dashboard(ttk.Frame):
         err = tk.StringVar()
 
         def build(host: ctk.CTkFrame) -> None:
-            form = ctk.CTkScrollableFrame(host, fg_color="transparent")
+            form = ctk.CTkScrollableFrame(host, fg_color="transparent", scrollbar_button_color=C["border"], scrollbar_button_hover_color=C["muted"])
             form.pack(fill=tk.BOTH, expand=True)
             field_vars: Dict[str, tk.StringVar] = {}
             first_entry: Optional[ctk.CTkEntry] = None
@@ -2404,7 +2421,7 @@ class Dashboard(ttk.Frame):
                     justify="left",
                 ).pack(fill=tk.X, pady=(0, 6))
 
-            fields = ctk.CTkScrollableFrame(host, fg_color="transparent")
+            fields = ctk.CTkScrollableFrame(host, fg_color="transparent", scrollbar_button_color=C["border"], scrollbar_button_hover_color=C["muted"])
             fields.pack(fill=tk.BOTH, expand=True)
             for index, key in enumerate(ASSIST_FIELD_KEYS, start=1):
                 value = assist_field_value(personal, key)
@@ -2957,7 +2974,7 @@ class Dashboard(ttk.Frame):
                 row,
                 height=6,
                 corner_radius=3,
-                fg_color="#dedee3",
+                fg_color=C["border"],
                 progress_color=C["danger"] if ratio >= 1 else C["text"],
             )
             bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
