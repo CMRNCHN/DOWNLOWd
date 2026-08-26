@@ -76,25 +76,26 @@ else:
     UI_DISPLAY = "Helvetica Neue"
     MONO = "Menlo"
 
-# shadcn-inspired neutral palette: zinc grays, hairline borders, a single
-# near-black primary (no sporadic accent-blue), muted secondaries.
+# shadcn-inspired neutral palette on the cool "slate" base: layered grays,
+# hairline borders, a single near-black primary, muted secondaries.
 C = {
-    "bg": "#f4f4f5",        # zinc-100  app background
-    "surface": "#f4f4f5",   # zinc-100  secondary / muted panels
-    "card": "#ffffff",      # white     cards & popovers
-    "card_hi": "#e4e4e7",   # zinc-200  hover
-    "border": "#e4e4e7",    # zinc-200  hairline border
-    "text": "#18181b",      # zinc-900  foreground
-    "muted": "#71717a",     # zinc-500  muted foreground
-    "accent": "#18181b",    # zinc-900  primary
-    "accent_hover": "#27272a",  # zinc-800  primary hover
-    "accent_dim": "#f4f4f5",    # zinc-100  subtle selection tint
+    "bg": "#f1f5f9",        # slate-100  app background
+    "surface": "#f1f5f9",   # slate-100  secondary / muted panels
+    "card": "#ffffff",      # white      cards & popovers
+    "card_hi": "#e2e8f0",   # slate-200  hover
+    "border": "#e2e8f0",    # slate-200  hairline border
+    "shadow": "#cbd5e1",    # slate-300  faux elevation edge
+    "text": "#0f172a",      # slate-900  foreground
+    "muted": "#64748b",     # slate-500  muted foreground
+    "accent": "#0f172a",    # slate-900  primary
+    "accent_hover": "#1e293b",  # slate-800  primary hover
+    "accent_dim": "#f1f5f9",    # slate-100  subtle selection tint
     "success": "#16a34a",   # green-600
     "warn": "#f59e0b",      # amber-500
     "danger": "#ef4444",    # red-500
-    "ink": "#18181b",       # zinc-900  (dark text / marks)
-    "paper": "#ffffff",     # white     (text on primary)
-    "status": "#71717a",    # zinc-500
+    "ink": "#0f172a",       # slate-900  (dark text / marks)
+    "paper": "#ffffff",     # white      (text on primary)
+    "status": "#64748b",    # slate-500
 }
 
 F_DISPLAY = (UI_DISPLAY, 22, "bold")
@@ -979,17 +980,18 @@ class Dashboard(ttk.Frame):
 
         self._sheet = ctk.CTkFrame(content, fg_color=C["bg"], corner_radius=0)
 
-        # Left: names only
+        # Left: names only (nested in a thin underlay for a soft drop shadow)
+        people_wrap = ctk.CTkFrame(body, fg_color=C["shadow"], corner_radius=12, width=214)
+        people_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        people_wrap.grid_propagate(False)
         people = ctk.CTkFrame(
-            body,
+            people_wrap,
             fg_color=C["card"],
-            corner_radius=10,
+            corner_radius=12,
             border_width=1,
             border_color=C["border"],
-            width=212,
         )
-        people.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        people.grid_propagate(False)
+        people.pack(fill=tk.BOTH, expand=True, padx=(0, 2), pady=(0, 2))
         head = ctk.CTkFrame(people, fg_color="transparent")
         head.pack(fill=tk.X, padx=10, pady=(10, 4))
         ctk.CTkLabel(
@@ -1063,14 +1065,16 @@ class Dashboard(ttk.Frame):
         right.grid_rowconfigure(1, weight=0)
         right.grid_columnconfigure(0, weight=1)
 
+        profile_wrap = ctk.CTkFrame(right, fg_color=C["shadow"], corner_radius=12)
+        profile_wrap.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
         profile_card = ctk.CTkFrame(
-            right,
+            profile_wrap,
             fg_color=C["card"],
-            corner_radius=10,
+            corner_radius=12,
             border_width=1,
             border_color=C["border"],
         )
-        profile_card.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
+        profile_card.pack(fill=tk.BOTH, expand=True, padx=(0, 2), pady=(0, 2))
 
         self.profile_title = tk.StringVar(value="Select an employee")
         self.profile_subtitle = tk.StringVar(value="Choose a name on the left")
@@ -1128,6 +1132,8 @@ class Dashboard(ttk.Frame):
                 fg_color="transparent",
                 hover_color=C["card_hi"],
                 text_color=C["muted"],
+                border_width=1,
+                border_color=C["surface"],
                 font=(UI, 12),
             )
             btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3, pady=4)
@@ -1143,14 +1149,16 @@ class Dashboard(ttk.Frame):
         self.profile_viewer.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
         self._render_profile_viewer("Select an employee to load their vault profile.")
 
+        actions_wrap = ctk.CTkFrame(right, fg_color=C["shadow"], corner_radius=12)
+        actions_wrap.grid(row=1, column=0, sticky="ew")
         actions_card = ctk.CTkFrame(
-            right,
+            actions_wrap,
             fg_color=C["card"],
-            corner_radius=10,
+            corner_radius=12,
             border_width=1,
             border_color=C["border"],
         )
-        actions_card.grid(row=1, column=0, sticky="ew")
+        actions_card.pack(fill=tk.BOTH, expand=True, padx=(0, 2), pady=(0, 2))
         ahead = ctk.CTkFrame(actions_card, fg_color="transparent")
         ahead.pack(fill=tk.X, padx=12, pady=(10, 4))
         ctk.CTkLabel(
@@ -1671,6 +1679,7 @@ class Dashboard(ttk.Frame):
             try:
                 button.configure(
                     fg_color=C["card"] if key == role else "transparent",
+                    border_color=C["shadow"] if key == role else C["surface"],
                     text_color=C["text"] if key == role else (C["text"] if exists else C["muted"]),
                 )
             except tk.TclError:
@@ -2430,9 +2439,10 @@ class Dashboard(ttk.Frame):
                 row = ctk.CTkFrame(fields, fg_color=C["surface"], corner_radius=10)
                 row.pack(fill=tk.X, pady=2)
                 label = ASSIST_FIELD_LABELS.get(key, key)
+                hotkey = f"⌘{index}" if sys.platform == "darwin" else f"⌃{index}"
                 ctk.CTkLabel(
                     row,
-                    text=f"⌘{index} {label}",
+                    text=f"{hotkey} {label}",
                     font=(MONO, 10),
                     text_color=C["ink"],
                     width=110,
@@ -2475,7 +2485,11 @@ class Dashboard(ttk.Frame):
 
             ctk.CTkLabel(
                 host,
-                text=f"Click the signup field, then Paste / ⌘1–6. {note}",
+                text=(
+                    "Click the signup field, then Paste / "
+                    + ("⌘1–6" if sys.platform == "darwin" else "⌃1–6")
+                    + f". {note}"
+                ),
                 font=F_CAPTION,
                 text_color=C["muted"],
                 wraplength=520,
