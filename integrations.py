@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -225,6 +226,10 @@ class BitwardenService:
 
     def __init__(self):
         self.session_key: Optional[str] = None
+        # The `bw` CLI keeps a single on-disk state (data.json); running two
+        # invocations at once (e.g. a profile load while accounts are being
+        # provisioned) can corrupt that state or hang. Serialize every call.
+        self._cli_lock = threading.RLock()
 
     def _env_with_session(self) -> Dict[str, str]:
         env = os.environ.copy()
@@ -235,12 +240,17 @@ class BitwardenService:
         return env
 
     def _run_bw(self, args: List[str], **kwargs) -> subprocess.CompletedProcess:
-        """Run a bw CLI command with BW_SESSION set when available."""
-        return subprocess.run(
-            ["bw", *args],
-            env=self._env_with_session(),
-            **kwargs,
-        )
+        """Run a bw CLI command with BW_SESSION set when available.
+
+        Serialized behind a lock so concurrent callers (background account
+        provisioning + foreground profile loads) never invoke `bw` at once.
+        """
+        with self._cli_lock:
+            return subprocess.run(
+                ["bw", *args],
+                env=self._env_with_session(),
+                **kwargs,
+            )
 
     def clear_session(self) -> None:
         self.session_key = None
@@ -267,14 +277,15 @@ class BitwardenService:
         try:
             env = self._env_with_session()
             env["BW_PASSWORD"] = password
-            proc = subprocess.run(
-                ["bw", "unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
-                env=env,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+            with self._cli_lock:
+                proc = subprocess.run(
+                    ["bw", "unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
             self.session_key = proc.stdout.strip() or None
             if not self.session_key:
                 logging.error("Unlock succeeded but no session key returned.")
@@ -303,14 +314,15 @@ class BitwardenService:
         try:
             env = self._env_with_session()
             env["BW_PASSWORD"] = password
-            proc = subprocess.run(
-                command,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+            with self._cli_lock:
+                proc = subprocess.run(
+                    command,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
             self.session_key = proc.stdout.strip() or None
             if not self.session_key:
                 logging.error("Login succeeded but no session key returned.")

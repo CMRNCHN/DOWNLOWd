@@ -308,6 +308,13 @@ class AccountCreator:
                 raise WebDriverException(
                     "Chrome driver startup timed out after 20s"
                 ) from exc
+        # Bound page loads / scripts so a slow or unresponsive signup page can
+        # never hang the provisioning worker indefinitely.
+        try:
+            self._driver.set_page_load_timeout(30)
+            self._driver.set_script_timeout(15)
+        except WebDriverException:
+            pass
         return self._driver
 
     @staticmethod
