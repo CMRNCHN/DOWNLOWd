@@ -65,36 +65,46 @@ from transaction_db import TransactionDatabase
 
 DOWNLOADS = Path.home() / "Downloads"
 
-# Honest ops desk — blotter, paper cards, ink, muted olive accent.
+# Apple-inspired system typography. SF on macOS (the target), graceful
+# fallback to Helvetica Neue elsewhere so the layout stays clean everywhere.
+if sys.platform == "darwin":
+    UI = "SF Pro Text"
+    UI_DISPLAY = "SF Pro Display"
+    MONO = "SF Mono"
+else:
+    UI = "Helvetica Neue"
+    UI_DISPLAY = "Helvetica Neue"
+    MONO = "Menlo"
+
+# macOS system light palette: layered grays, hairline borders, system blue.
 C = {
-    "bg": "#dfe3e8",
-    "surface": "#e8ebe6",
-    "card": "#f4f5f2",
-    "card_hi": "#d8dcd4",
-    "border": "#b8bfb4",
-    "text": "#141414",
-    "muted": "#5c6359",
-    "accent": "#3d5a45",
-    "accent_hover": "#2f4636",
-    "accent_dim": "#e2ebe4",
-    "success": "#2f6b4a",
-    "warn": "#8a6a2b",
-    "danger": "#8b2e2e",
-    "ink": "#141414",
-    "paper": "#f4f5f2",
-    "status": "#8a9186",
+    "bg": "#e8e8ed",
+    "surface": "#f2f2f7",
+    "card": "#ffffff",
+    "card_hi": "#e7e7ee",
+    "border": "#d6d6db",
+    "text": "#1d1d1f",
+    "muted": "#6e6e73",
+    "accent": "#007aff",
+    "accent_hover": "#0063d1",
+    "accent_dim": "#e5f0ff",
+    "success": "#34c759",
+    "warn": "#ff9f0a",
+    "danger": "#ff3b30",
+    "ink": "#1d1d1f",
+    "paper": "#ffffff",
+    "status": "#8a8a8e",
 }
 
-# System UI for chrome; Menlo for brand, captions, vault data.
-F_DISPLAY = ("Helvetica Neue", 17, "bold")
-F_TITLE = ("Helvetica Neue", 13, "bold")
-F_BODY = ("Helvetica Neue", 12)
-F_CAPTION = ("Menlo", 9)
-F_DATA = ("Menlo", 10)
-F_BRAND = ("Menlo", 14, "bold")
+F_DISPLAY = (UI_DISPLAY, 22, "bold")
+F_TITLE = (UI, 15, "bold")
+F_BODY = (UI, 13)
+F_CAPTION = (UI, 11)
+F_DATA = (MONO, 12)
+F_BRAND = (UI_DISPLAY, 16, "bold")
 
 ctk.set_appearance_mode("light")
-ctk.set_default_color_theme("green")
+ctk.set_default_color_theme("blue")
 
 
 def _filevault_status() -> tuple[Optional[bool], str]:
@@ -130,53 +140,58 @@ def apply_theme(root: tk.Tk) -> ttk.Style:
     style.configure("TFrame", background=C["card"])
     style.configure("Card.TFrame", background=C["surface"])
     style.configure("Surface.TFrame", background=C["surface"])
-    style.configure("TLabel", background=C["card"], foreground=C["text"], font=("Helvetica Neue", 12))
-    style.configure("Muted.TLabel", background=C["card"], foreground=C["muted"], font=("Helvetica Neue", 11))
-    style.configure("Title.TLabel", background=C["card"], foreground=C["text"], font=("Helvetica Neue", 18, "bold"))
-    style.configure("Subtitle.TLabel", background=C["card"], foreground=C["muted"], font=("Helvetica Neue", 12))
-    style.configure("CardTitle.TLabel", background=C["surface"], foreground=C["text"], font=("Helvetica Neue", 12, "bold"))
-    style.configure("CardMuted.TLabel", background=C["surface"], foreground=C["muted"], font=("Menlo", 10))
-    style.configure("Icon.TLabel", background=C["surface"], foreground=C["accent"], font=("Menlo", 22, "bold"))
-    style.configure("Drop.TLabel", background=C["card"], foreground=C["text"], font=("Helvetica Neue", 12, "bold"))
-    style.configure("TButton", background=C["surface"], foreground=C["text"], padding=(14, 8), font=("Helvetica Neue", 11))
+    style.configure("TLabel", background=C["card"], foreground=C["text"], font=(UI, 12))
+    style.configure("Muted.TLabel", background=C["card"], foreground=C["muted"], font=(UI, 11))
+    style.configure("Title.TLabel", background=C["card"], foreground=C["text"], font=(UI, 18, "bold"))
+    style.configure("Subtitle.TLabel", background=C["card"], foreground=C["muted"], font=(UI, 12))
+    style.configure("CardTitle.TLabel", background=C["surface"], foreground=C["text"], font=(UI, 12, "bold"))
+    style.configure("CardMuted.TLabel", background=C["surface"], foreground=C["muted"], font=(MONO, 10))
+    style.configure("Icon.TLabel", background=C["surface"], foreground=C["accent"], font=(MONO, 22, "bold"))
+    style.configure("Drop.TLabel", background=C["card"], foreground=C["text"], font=(UI, 12, "bold"))
+    style.configure("TButton", background=C["surface"], foreground=C["text"], padding=(14, 8), font=(UI, 11))
     style.map("TButton", background=[("active", C["card_hi"])])
     style.configure(
         "Accent.TButton",
         background=C["accent"],
         foreground=C["paper"],
         padding=(16, 10),
-        font=("Helvetica Neue", 12, "bold"),
+        font=(UI, 12, "bold"),
     )
     style.map("Accent.TButton", background=[("active", C["accent_hover"])])
     style.configure("TEntry", fieldbackground=C["card"], foreground=C["text"], insertcolor=C["text"])
-    style.configure("TCheckbutton", background=C["card"], foreground=C["text"], font=("Helvetica Neue", 12))
+    style.configure("TCheckbutton", background=C["card"], foreground=C["text"], font=(UI, 12))
     style.configure("TLabelframe", background=C["card"], foreground=C["text"], bordercolor=C["border"])
-    style.configure("TLabelframe.Label", background=C["card"], foreground=C["muted"], font=("Menlo", 9))
+    style.configure("TLabelframe.Label", background=C["card"], foreground=C["muted"], font=(MONO, 9))
     style.configure("TNotebook", background=C["bg"], borderwidth=0)
     style.configure("TNotebook.Tab", background=C["surface"], foreground=C["muted"], padding=(16, 8))
     style.map("TNotebook.Tab", background=[("selected", C["card"])], foreground=[("selected", C["text"])])
     style.configure("TCombobox", fieldbackground=C["card"], foreground=C["text"], background=C["card"])
     style.configure(
         "Treeview",
-        background=C["paper"],
+        background=C["card"],
         foreground=C["text"],
-        fieldbackground=C["paper"],
-        rowheight=34,
+        fieldbackground=C["card"],
+        rowheight=30,
         borderwidth=0,
-        font=("Menlo", 10),
+        font=(UI, 12),
     )
     style.configure(
         "Treeview.Heading",
-        background=C["ink"],
-        foreground=C["paper"],
+        background=C["surface"],
+        foreground=C["muted"],
         borderwidth=0,
-        padding=(8, 7),
-        font=("Menlo", 9),
+        padding=(10, 8),
+        font=(UI, 11, "bold"),
     )
     style.map(
         "Treeview.Heading",
-        background=[("active", C["ink"])],
-        foreground=[("active", C["paper"])],
+        background=[("active", C["card_hi"])],
+        foreground=[("active", C["text"])],
+    )
+    style.map(
+        "Treeview",
+        background=[("selected", C["accent"])],
+        foreground=[("selected", "#ffffff")],
     )
     return style
 
@@ -220,7 +235,7 @@ class CompletionRing(tk.Canvas):
             size / 2,
             text=str(percent),
             fill=C["ink"],
-            font=("Menlo", 7, "bold"),
+            font=(MONO, 7, "bold"),
         )
 
 
@@ -252,7 +267,7 @@ class BrandGlyph(tk.Canvas):
             size / 2,
             text="DL",
             fill=stroke,
-            font=("Menlo", max(9, size // 3), "bold"),
+            font=(MONO, max(9, size // 3), "bold"),
         )
 
 
@@ -294,7 +309,7 @@ class InitialsMark(tk.Canvas):
             size / 2,
             text=(initials or "—")[:2],
             fill=C["paper"] if selected else C["ink"],
-            font=("Menlo", 11, "bold"),
+            font=(MONO, 11, "bold"),
         )
 
 
@@ -318,12 +333,12 @@ def _auth_shell(dialog: ctk.CTkToplevel, *, height: int) -> ctk.CTkFrame:
     card = ctk.CTkFrame(
         shell,
         fg_color=C["card"],
-        corner_radius=2,
+        corner_radius=10,
         border_width=1,
         border_color=C["border"],
     )
     card.pack(fill=tk.BOTH, expand=True, padx=18, pady=18)
-    ctk.CTkFrame(card, fg_color=C["ink"], height=2, corner_radius=0).pack(fill=tk.X)
+    ctk.CTkFrame(card, fg_color=C["accent"], height=3, corner_radius=0).pack(fill=tk.X)
     return card
 
 
@@ -435,12 +450,12 @@ def _auth_primary_button(parent: ctk.CTkFrame, text: str, command: Callable[[], 
         text=text,
         command=command,
         height=44,
-        corner_radius=2,
+        corner_radius=10,
         border_width=0,
         fg_color=C["accent"],
         hover_color=C["accent_hover"],
         text_color=C["paper"],
-        font=("Helvetica Neue", 12, "bold"),
+        font=(UI, 12, "bold"),
         cursor="hand2",
     )
     button.pack(fill=tk.X, pady=(6, 0))
@@ -506,7 +521,7 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             form,
             textvariable=status_var,
-            font=("Helvetica Neue", 11),
+            font=(UI, 11),
             text_color=C["muted"],
             anchor="w",
         ).pack(fill=tk.X, pady=(0, 4))
@@ -560,7 +575,7 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             form,
             text="DOWNLOWd is a Bitwarden wrapper — secrets stay in your vault.",
-            font=("Helvetica Neue", 11),
+            font=(UI, 11),
             text_color=C["muted"],
             wraplength=300,
             justify="center",
@@ -781,8 +796,7 @@ class AppGUI:
 
     def build_main_screen(self):
         self.root.title("DOWNLOWd")
-        self.root.minsize(420, 480)
-        self.root.geometry("480x560+120+60")
+        self.root.minsize(900, 620)
         for child in self.root.winfo_children():
             child.destroy()
         self.dashboard = Dashboard(self.root, self)
@@ -792,6 +806,10 @@ class AppGUI:
             pass
         self.root.deiconify()
         self.root.lift()
+        # Apply the working size once the window is actually mapped, otherwise
+        # some window managers clamp a pre-map geometry request down to minsize.
+        self.root.geometry("1160x780")
+        self.root.after(60, lambda: self.root.geometry("1160x780"))
         self.root.attributes("-topmost", True)
         self.root.after(350, lambda: self.root.attributes("-topmost", False))
         self.root.focus_force()
@@ -884,21 +902,21 @@ class Dashboard(ttk.Frame):
         shell = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         shell.pack(fill=tk.BOTH, expand=True)
 
-        # Ops masthead — wordmark + status, minimal mark
-        header = ctk.CTkFrame(shell, fg_color=C["card"], height=52, corner_radius=0)
+        # Toolbar — wordmark on the left, primary actions on the right.
+        header = ctk.CTkFrame(shell, fg_color=C["card"], height=64, corner_radius=0)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
         mast = ctk.CTkFrame(header, fg_color="transparent")
-        mast.pack(fill=tk.BOTH, expand=True, padx=12, pady=(8, 0))
+        mast.pack(fill=tk.BOTH, expand=True, padx=20, pady=(10, 0))
 
         brand = ctk.CTkFrame(mast, fg_color="transparent")
         brand.pack(side=tk.LEFT)
-        mark = ctk.CTkFrame(brand, width=28, height=28, corner_radius=2, fg_color=C["surface"])
+        mark = ctk.CTkFrame(brand, width=34, height=34, corner_radius=9, fg_color=C["accent"])
         mark.pack(side=tk.LEFT)
         mark.pack_propagate(False)
-        BrandGlyph(mark, size=26, bg=C["surface"], ink=C["ink"]).pack(expand=True)
+        BrandGlyph(mark, size=30, bg=C["accent"], ink="#ffffff").pack(expand=True)
         title_col = ctk.CTkFrame(brand, fg_color="transparent")
-        title_col.pack(side=tk.LEFT, padx=(8, 0))
+        title_col.pack(side=tk.LEFT, padx=(10, 0))
         ctk.CTkLabel(
             title_col,
             text="DOWNLOWd",
@@ -907,7 +925,7 @@ class Dashboard(ttk.Frame):
         ).pack(anchor="w")
         ctk.CTkLabel(
             title_col,
-            text="ops",
+            text="Onboarding console",
             font=F_CAPTION,
             text_color=C["muted"],
         ).pack(anchor="w")
@@ -918,39 +936,39 @@ class Dashboard(ttk.Frame):
             actions,
             text="Sync",
             command=self._sync_profiles,
-            width=58,
-            height=28,
-            corner_radius=2,
+            width=76,
+            height=34,
+            corner_radius=8,
             fg_color=C["accent"],
             hover_color=C["accent_hover"],
             text_color=C["paper"],
-            font=("Helvetica Neue", 11, "bold"),
-        ).pack(side=tk.LEFT, padx=(0, 6))
+            font=(UI, 13, "bold"),
+        ).pack(side=tk.LEFT, padx=(0, 8))
         ctk.CTkButton(
             actions,
-            text="···",
+            text="Settings",
             command=self._open_settings_modal,
-            width=28,
-            height=28,
-            corner_radius=2,
+            width=88,
+            height=34,
+            corner_radius=8,
             fg_color=C["surface"],
-            hover_color=C["border"],
-            text_color=C["ink"],
-            font=("Menlo", 12, "bold"),
+            hover_color=C["card_hi"],
+            text_color=C["text"],
+            font=(UI, 13),
         ).pack(side=tk.LEFT)
 
-        ctk.CTkFrame(header, fg_color=C["ink"], height=1, corner_radius=0).pack(
+        ctk.CTkFrame(header, fg_color=C["border"], height=1, corner_radius=0).pack(
             fill=tk.X, side=tk.BOTTOM
         )
 
         content = ctk.CTkFrame(shell, fg_color="transparent")
-        content.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
+        content.pack(fill=tk.BOTH, expand=True, padx=16, pady=(12, 8))
         self._content = content
 
         body = ctk.CTkFrame(content, fg_color="transparent")
         body.pack(fill=tk.BOTH, expand=True)
         self._workspace = body
-        body.grid_columnconfigure(0, weight=0, minsize=168)
+        body.grid_columnconfigure(0, weight=0, minsize=212)
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
@@ -960,12 +978,12 @@ class Dashboard(ttk.Frame):
         people = ctk.CTkFrame(
             body,
             fg_color=C["card"],
-            corner_radius=2,
+            corner_radius=10,
             border_width=1,
             border_color=C["border"],
-            width=168,
+            width=212,
         )
-        people.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        people.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         people.grid_propagate(False)
         head = ctk.CTkFrame(people, fg_color="transparent")
         head.pack(fill=tk.X, padx=10, pady=(10, 4))
@@ -979,7 +997,7 @@ class Dashboard(ttk.Frame):
         ctk.CTkLabel(
             head,
             textvariable=self.employee_count,
-            font=("Menlo", 10, "bold"),
+            font=(MONO, 10, "bold"),
             text_color=C["accent"],
         ).pack(side=tk.RIGHT)
 
@@ -992,41 +1010,41 @@ class Dashboard(ttk.Frame):
         self.employee_grid = self.employee_scroll
 
         intake = ctk.CTkFrame(people, fg_color="transparent")
-        intake.pack(fill=tk.X, padx=8, pady=(0, 10))
+        intake.pack(fill=tk.X, padx=10, pady=(4, 12))
         ctk.CTkButton(
             intake,
-            text="Manual",
+            text="+ Add employee",
             command=self._open_manual_employee_dialog,
-            height=26,
-            corner_radius=2,
+            height=36,
+            corner_radius=8,
             fg_color=C["accent"],
             hover_color=C["accent_hover"],
             text_color=C["paper"],
-            font=("Menlo", 9),
-        ).pack(fill=tk.X, pady=(0, 4))
+            font=(UI, 13, "bold"),
+        ).pack(fill=tk.X, pady=(0, 6))
         row = ctk.CTkFrame(intake, fg_color="transparent")
         row.pack(fill=tk.X)
         ctk.CTkButton(
             row,
-            text="File",
+            text="Import file",
             command=self._browse_files,
-            height=26,
-            corner_radius=2,
+            height=34,
+            corner_radius=8,
             fg_color=C["surface"],
             hover_color=C["card_hi"],
-            text_color=C["ink"],
-            font=("Menlo", 9),
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 3))
+            text_color=C["text"],
+            font=(UI, 12),
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         ctk.CTkButton(
             row,
             text="Run",
             command=lambda: self.run_pipeline(quiet=False),
-            height=26,
-            corner_radius=2,
-            fg_color=C["ink"],
-            hover_color="#2a2a2a",
+            height=34,
+            corner_radius=8,
+            fg_color=C["accent"],
+            hover_color=C["accent_hover"],
             text_color=C["paper"],
-            font=("Menlo", 9),
+            font=(UI, 12, "bold"),
         ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Right: full profile + employee actions
@@ -1039,7 +1057,7 @@ class Dashboard(ttk.Frame):
         profile_card = ctk.CTkFrame(
             right,
             fg_color=C["card"],
-            corner_radius=2,
+            corner_radius=10,
             border_width=1,
             border_color=C["border"],
         )
@@ -1048,11 +1066,11 @@ class Dashboard(ttk.Frame):
         self.profile_title = tk.StringVar(value="Select an employee")
         self.profile_subtitle = tk.StringVar(value="Choose a name on the left")
         top = ctk.CTkFrame(profile_card, fg_color="transparent")
-        top.pack(fill=tk.X, padx=14, pady=(12, 4))
+        top.pack(fill=tk.X, padx=18, pady=(16, 2))
         ctk.CTkLabel(
             top,
             textvariable=self.profile_title,
-            font=("Helvetica Neue", 18, "bold"),
+            font=(UI_DISPLAY, 20, "bold"),
             text_color=C["ink"],
             anchor="w",
         ).pack(side=tk.LEFT)
@@ -1060,26 +1078,26 @@ class Dashboard(ttk.Frame):
             top,
             text="Edit",
             command=self._edit_selected_identity,
-            width=56,
-            height=28,
-            corner_radius=2,
+            width=64,
+            height=30,
+            corner_radius=8,
             fg_color=C["accent"],
             hover_color=C["accent_hover"],
             text_color=C["paper"],
-            font=("Helvetica Neue", 11, "bold"),
+            font=(UI, 12, "bold"),
             state=tk.DISABLED,
         )
         self.profile_edit_button.pack(side=tk.RIGHT)
         ctk.CTkLabel(
             profile_card,
             textvariable=self.profile_subtitle,
-            font=("Menlo", 9),
+            font=F_CAPTION,
             text_color=C["muted"],
             anchor="w",
-        ).pack(fill=tk.X, padx=14, pady=(0, 6))
+        ).pack(fill=tk.X, padx=18, pady=(0, 10))
 
-        rail = ctk.CTkFrame(profile_card, fg_color=C["surface"], corner_radius=2)
-        rail.pack(fill=tk.X, padx=12, pady=(0, 6))
+        rail = ctk.CTkFrame(profile_card, fg_color=C["surface"], corner_radius=9)
+        rail.pack(fill=tk.X, padx=16, pady=(0, 8))
         self.record_buttons = {}
         labels = {
             "identity": "Identity",
@@ -1093,21 +1111,21 @@ class Dashboard(ttk.Frame):
                 rail,
                 text=labels.get(role, role),
                 command=lambda r=role: self._show_profile_record(r),
-                width=72,
-                height=28,
-                corner_radius=2,
+                width=40,
+                height=32,
+                corner_radius=7,
                 fg_color="transparent",
                 hover_color=C["card_hi"],
                 text_color=C["muted"],
-                font=("Menlo", 9),
+                font=(UI, 12),
             )
-            btn.pack(side=tk.LEFT, padx=2, pady=4)
+            btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3, pady=4)
             self.record_buttons[role] = btn
 
         self.profile_viewer = ctk.CTkScrollableFrame(
             profile_card,
             fg_color=C["surface"],
-            corner_radius=2,
+            corner_radius=10,
         )
         self.profile_viewer.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
         self._render_profile_viewer("Select an employee to load their vault profile.")
@@ -1115,7 +1133,7 @@ class Dashboard(ttk.Frame):
         actions_card = ctk.CTkFrame(
             right,
             fg_color=C["card"],
-            corner_radius=2,
+            corner_radius=10,
             border_width=1,
             border_color=C["border"],
         )
@@ -1132,12 +1150,12 @@ class Dashboard(ttk.Frame):
         ctk.CTkLabel(
             ahead,
             textvariable=self.actions_hint,
-            font=("Menlo", 8),
-            text_color=C["status"],
+            font=F_CAPTION,
+            text_color=C["muted"],
         ).pack(side=tk.RIGHT)
 
         action_row = ctk.CTkFrame(actions_card, fg_color="transparent")
-        action_row.pack(fill=tk.X, padx=10, pady=(0, 6))
+        action_row.pack(fill=tk.X, padx=12, pady=(0, 8))
         action_specs = (
             ("Log spend", self._action_log_spend),
             ("Create accounts", self._resume_profile_accounts),
@@ -1149,13 +1167,13 @@ class Dashboard(ttk.Frame):
                 action_row,
                 text=label,
                 command=command,
-                height=32,
-                corner_radius=2,
+                height=38,
+                corner_radius=8,
                 fg_color=C["surface"],
                 hover_color=C["card_hi"],
-                text_color=C["ink"],
-                font=("Helvetica Neue", 11),
-            ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+                text_color=C["text"],
+                font=(UI, 12),
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3)
 
         danger = ctk.CTkFrame(actions_card, fg_color="transparent")
         danger.pack(fill=tk.X, padx=10, pady=(0, 10))
@@ -1163,31 +1181,31 @@ class Dashboard(ttk.Frame):
             danger,
             text="Restore",
             command=self._restore_selected_profile,
-            height=30,
-            corner_radius=2,
+            height=34,
+            corner_radius=8,
             fg_color=C["surface"],
             hover_color=C["card_hi"],
-            text_color=C["ink"],
-            font=("Helvetica Neue", 11),
+            text_color=C["text"],
+            font=(UI, 12),
             state=tk.DISABLED,
         )
-        self.profile_restore_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 2))
+        self.profile_restore_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3, 3))
         self.profile_delete_button = ctk.CTkButton(
             danger,
             text="Delete",
             command=self._delete_selected_profile,
-            height=30,
-            corner_radius=2,
+            height=34,
+            corner_radius=8,
             fg_color="transparent",
-            hover_color="#fee2e2",
+            hover_color="#ffe5e3",
             text_color=C["danger"],
-            font=("Helvetica Neue", 11),
+            font=(UI, 12),
             state=tk.DISABLED,
         )
-        self.profile_delete_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 2))
+        self.profile_delete_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3, 3))
 
         # Spend list still available for selected employee (compact).
-        spend_wrap = ctk.CTkFrame(actions_card, fg_color=C["surface"], corner_radius=2)
+        spend_wrap = ctk.CTkFrame(actions_card, fg_color=C["surface"], corner_radius=10)
         spend_wrap.pack(fill=tk.X, padx=10, pady=(0, 10))
         self.budget_overview = ctk.CTkFrame(spend_wrap, fg_color="transparent")
         self.budget_overview.pack(fill=tk.X, padx=6, pady=(4, 0))
@@ -1213,22 +1231,29 @@ class Dashboard(ttk.Frame):
         self.preview_title = self.profile_title
         self.preview_meta = self.profile_subtitle
 
-        footer = ctk.CTkFrame(shell, fg_color=C["ink"], height=26, corner_radius=0)
+        footer = ctk.CTkFrame(
+            shell,
+            fg_color=C["card"],
+            height=30,
+            corner_radius=0,
+            border_width=1,
+            border_color=C["border"],
+        )
         footer.pack(fill=tk.X, side=tk.BOTTOM)
         footer.pack_propagate(False)
         ctk.CTkLabel(
             footer,
             textvariable=self.status,
-            font=("Menlo", 9),
-            text_color=C["status"],
+            font=F_CAPTION,
+            text_color=C["muted"],
             anchor="w",
-        ).pack(fill=tk.X, padx=12, pady=4)
+        ).pack(fill=tk.X, padx=16, pady=5)
 
         self._refresh_employee_list()
         self._refresh_transaction_list()
         try:
-            self.app.root.geometry("860x640+60+30")
-            self.app.root.minsize(720, 540)
+            self.app.root.geometry("1160x780")
+            self.app.root.minsize(900, 620)
         except tk.TclError:
             pass
 
@@ -1267,7 +1292,7 @@ class Dashboard(ttk.Frame):
         card = ctk.CTkFrame(
             self._sheet,
             fg_color=C["card"],
-            corner_radius=2,
+            corner_radius=10,
             border_width=1,
             border_color=C["border"],
         )
@@ -1297,11 +1322,11 @@ class Dashboard(ttk.Frame):
             text="Close",
             width=64,
             height=28,
-            corner_radius=2,
+            corner_radius=10,
             fg_color=C["surface"],
             hover_color=C["card_hi"],
             text_color=C["ink"],
-            font=("Helvetica Neue", 11),
+            font=(UI, 11),
             command=self._close_sheet,
         ).pack(side=tk.RIGHT)
 
@@ -1349,22 +1374,22 @@ class Dashboard(ttk.Frame):
                 text=yes_label,
                 command=yes,
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["accent"],
                 hover_color=C["accent_hover"],
                 text_color=C["paper"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
             ).pack(side=tk.LEFT)
             ctk.CTkButton(
                 row,
                 text=no_label,
                 command=no,
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["surface"],
                 hover_color=C["card_hi"],
                 text_color=C["ink"],
-                font=("Helvetica Neue", 12),
+                font=(UI, 12),
             ).pack(side=tk.LEFT, padx=8)
 
         self._open_sheet(title, build, on_close=on_no)
@@ -1406,7 +1431,7 @@ class Dashboard(ttk.Frame):
                 ctk.CTkLabel(
                     form,
                     text=label.upper(),
-                    font=("Helvetica Neue", 9, "bold"),
+                    font=(UI, 9, "bold"),
                     text_color=C["muted"],
                     anchor="w",
                 ).pack(fill=tk.X, pady=(8, 4))
@@ -1414,12 +1439,12 @@ class Dashboard(ttk.Frame):
                     form,
                     textvariable=var,
                     height=34,
-                    corner_radius=2,
+                    corner_radius=10,
                     border_width=1,
                     border_color=C["border"],
                     fg_color=C["surface"],
                     show=show,
-                    font=("Helvetica Neue", 12),
+                    font=(UI, 12),
                 ).pack(fill=tk.X)
 
             labeled_entry("Shared passphrase", self.shared_passphrase, show="•")
@@ -1435,7 +1460,7 @@ class Dashboard(ttk.Frame):
                 row = ctk.CTkFrame(form, fg_color="transparent")
                 row.pack(fill=tk.X, pady=4)
                 ctk.CTkLabel(
-                    row, text=label, font=("Helvetica Neue", 12), text_color=C["text"]
+                    row, text=label, font=(UI, 12), text_color=C["text"]
                 ).pack(side=tk.LEFT)
                 ctk.CTkSwitch(
                     row,
@@ -1462,7 +1487,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 form,
                 text="LOCAL DELETE",
-                font=("Helvetica Neue", 9, "bold"),
+                font=(UI, 9, "bold"),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X, pady=(10, 4))
@@ -1471,18 +1496,18 @@ class Dashboard(ttk.Frame):
                 variable=self.local_delete_mode,
                 values=list(LOCAL_DELETE_MODES),
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["surface"],
                 button_color=C["card_hi"],
                 button_hover_color="#dedee2",
                 text_color=C["text"],
                 dropdown_fg_color=C["card"],
-                font=("Helvetica Neue", 11),
+                font=(UI, 11),
             ).pack(fill=tk.X)
             ctk.CTkLabel(
                 form,
                 text="VAULT CLEANUP",
-                font=("Helvetica Neue", 9, "bold"),
+                font=(UI, 9, "bold"),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X, pady=(10, 4))
@@ -1491,13 +1516,13 @@ class Dashboard(ttk.Frame):
                 variable=self.bw_shred_mode,
                 values=list(BW_SHRED_MODES),
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["surface"],
                 button_color=C["card_hi"],
                 button_hover_color="#dedee2",
                 text_color=C["text"],
                 dropdown_fg_color=C["card"],
-                font=("Helvetica Neue", 11),
+                font=(UI, 11),
             ).pack(fill=tk.X)
 
             def save() -> None:
@@ -1511,11 +1536,11 @@ class Dashboard(ttk.Frame):
                 text="Save",
                 command=save,
                 height=36,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["accent"],
                 hover_color=C["accent_hover"],
                 text_color=C["paper"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
             ).pack(fill=tk.X, pady=(10, 0))
 
         self._open_sheet("Settings", build, subtitle="Stays in this window")
@@ -1555,8 +1580,8 @@ class Dashboard(ttk.Frame):
     def _expand_window(self, large: bool) -> None:
         root = self.app.root
         try:
-            root.geometry("860x640+60+30")
-            root.minsize(720, 540)
+            root.geometry("1160x780")
+            root.minsize(900, 620)
         except tk.TclError:
             pass
 
@@ -1707,7 +1732,7 @@ class Dashboard(ttk.Frame):
                 self.profile_viewer,
                 text=message,
                 text_color=C["muted"],
-                font=("Helvetica Neue", 11),
+                font=(UI, 11),
                 wraplength=440,
                 justify="left",
             ).pack(anchor="w", padx=14, pady=14)
@@ -1719,13 +1744,13 @@ class Dashboard(ttk.Frame):
                 self.profile_viewer,
                 text="Not created yet",
                 text_color=C["muted"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
             ).pack(anchor="w", padx=14, pady=(14, 4))
             ctk.CTkLabel(
                 self.profile_viewer,
                 text="Use Resume to provision this account, or wait for HQ auto-import.",
                 text_color=C["muted"],
-                font=("Helvetica Neue", 11),
+                font=(UI, 11),
                 wraplength=420,
                 justify="left",
             ).pack(anchor="w", padx=14)
@@ -1735,13 +1760,13 @@ class Dashboard(ttk.Frame):
                 self.profile_viewer,
                 text="Record unavailable",
                 text_color=C["text"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
             ).pack(anchor="w", padx=14, pady=(14, 6))
             ctk.CTkLabel(
                 self.profile_viewer,
                 text="Could not load this Bitwarden item. Sync and try again.",
                 text_color=C["muted"],
-                font=("Helvetica Neue", 11),
+                font=(UI, 11),
                 wraplength=420,
                 justify="left",
             ).pack(anchor="w", padx=14)
@@ -1751,7 +1776,7 @@ class Dashboard(ttk.Frame):
             self.profile_viewer,
             text=str(item.get("name") or role),
             text_color=C["text"],
-            font=("Helvetica Neue", 12, "bold"),
+            font=(UI, 12, "bold"),
         ).pack(anchor="w", padx=14, pady=(12, 8))
 
         if role == "identity":
@@ -1788,7 +1813,7 @@ class Dashboard(ttk.Frame):
                 self.profile_viewer,
                 text="No fields stored on this item yet.",
                 text_color=C["muted"],
-                font=("Helvetica Neue", 11),
+                font=(UI, 11),
             ).pack(anchor="w", padx=14, pady=8)
             return
 
@@ -1805,7 +1830,7 @@ class Dashboard(ttk.Frame):
                 anchor="w",
                 width=100,
                 text_color=C["muted"],
-                font=("Helvetica Neue", 10, "bold"),
+                font=(UI, 10, "bold"),
             ).pack(side=tk.LEFT, padx=(10, 6), pady=8)
             reveal_key = (role, label)
             shown = value
@@ -1816,7 +1841,7 @@ class Dashboard(ttk.Frame):
                 text=shown,
                 anchor="w",
                 text_color=C["text"],
-                font=("SF Mono", 11),
+                font=(MONO, 11),
             ).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=8)
             if sensitive:
                 ctk.CTkButton(
@@ -1829,7 +1854,7 @@ class Dashboard(ttk.Frame):
                     fg_color=C["card"],
                     hover_color="#e4e4e7",
                     text_color=C["text"],
-                    font=("Helvetica Neue", 9, "bold"),
+                    font=(UI, 9, "bold"),
                 ).pack(side=tk.RIGHT, padx=8, pady=6)
 
     def _toggle_profile_reveal(self, key: Tuple[str, str]):
@@ -1895,7 +1920,7 @@ class Dashboard(ttk.Frame):
                 ctk.CTkLabel(
                     form,
                     text=label.upper(),
-                    font=("Helvetica Neue", 9, "bold"),
+                    font=(UI, 9, "bold"),
                     text_color=C["muted"],
                     anchor="w",
                 ).pack(fill=tk.X, pady=(8, 3))
@@ -1904,7 +1929,7 @@ class Dashboard(ttk.Frame):
                     form,
                     textvariable=variables[key],
                     height=32,
-                    corner_radius=2,
+                    corner_radius=10,
                     border_width=1,
                     border_color=C["border"],
                     fg_color=C["surface"],
@@ -1934,11 +1959,11 @@ class Dashboard(ttk.Frame):
                 text="Save",
                 command=save,
                 height=36,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["accent"],
                 hover_color=C["accent_hover"],
                 text_color=C["paper"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
             ).pack(fill=tk.X, pady=(10, 0))
 
         self._open_sheet(
@@ -2153,12 +2178,12 @@ class Dashboard(ttk.Frame):
                     form,
                     textvariable=var,
                     height=32,
-                    corner_radius=2,
+                    corner_radius=10,
                     border_width=1,
                     border_color=C["border"],
                     fg_color=C["surface"],
                     show=show,
-                    font=("Menlo", 11) if key in {"ssn", "cc", "cvv", "dob"} else F_BODY,
+                    font=(MONO, 11) if key in {"ssn", "cc", "cvv", "dob"} else F_BODY,
                 )
                 entry.pack(fill=tk.X)
                 if first_entry is None:
@@ -2194,22 +2219,22 @@ class Dashboard(ttk.Frame):
                 text="Save & Run",
                 command=lambda: save(run_after=True),
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["accent"],
                 hover_color=C["accent_hover"],
                 text_color=C["paper"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
             ).pack(side=tk.LEFT)
             ctk.CTkButton(
                 actions,
                 text="Save only",
                 command=lambda: save(run_after=False),
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["surface"],
                 hover_color=C["card_hi"],
                 text_color=C["ink"],
-                font=("Helvetica Neue", 12),
+                font=(UI, 12),
             ).pack(side=tk.LEFT, padx=6)
             if first_entry is not None:
                 first_entry.focus()
@@ -2372,7 +2397,7 @@ class Dashboard(ttk.Frame):
                 ctk.CTkLabel(
                     host,
                     text=url,
-                    font=("Menlo", 8),
+                    font=(MONO, 8),
                     text_color=C["muted"],
                     anchor="w",
                     wraplength=520,
@@ -2385,13 +2410,13 @@ class Dashboard(ttk.Frame):
                 value = assist_field_value(personal, key)
                 if key == "email" and service == "Outlook" and not value:
                     value = assist_field_value(personal, "username")
-                row = ctk.CTkFrame(fields, fg_color=C["surface"], corner_radius=2)
+                row = ctk.CTkFrame(fields, fg_color=C["surface"], corner_radius=10)
                 row.pack(fill=tk.X, pady=2)
                 label = ASSIST_FIELD_LABELS.get(key, key)
                 ctk.CTkLabel(
                     row,
                     text=f"⌘{index} {label}",
-                    font=("Menlo", 10),
+                    font=(MONO, 10),
                     text_color=C["ink"],
                     width=110,
                     anchor="w",
@@ -2402,7 +2427,7 @@ class Dashboard(ttk.Frame):
                 ctk.CTkLabel(
                     row,
                     text=preview,
-                    font=("Menlo", 10),
+                    font=(MONO, 10),
                     text_color=C["muted"],
                     anchor="w",
                 ).pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -2411,11 +2436,11 @@ class Dashboard(ttk.Frame):
                     text="Copy",
                     width=48,
                     height=24,
-                    corner_radius=2,
+                    corner_radius=10,
                     fg_color=C["card"],
                     hover_color=C["card_hi"],
                     text_color=C["ink"],
-                    font=("Menlo", 9),
+                    font=(MONO, 9),
                     command=lambda k=key: self._assist_copy_field(k),
                 ).pack(side=tk.RIGHT, padx=4, pady=4)
                 ctk.CTkButton(
@@ -2423,11 +2448,11 @@ class Dashboard(ttk.Frame):
                     text="Paste",
                     width=52,
                     height=24,
-                    corner_radius=2,
+                    corner_radius=10,
                     fg_color=C["accent"],
                     hover_color=C["accent_hover"],
                     text_color=C["paper"],
-                    font=("Menlo", 9),
+                    font=(MONO, 9),
                     command=lambda k=key: self._assist_paste_field(k),
                 ).pack(side=tk.RIGHT, padx=(0, 4), pady=4)
 
@@ -2448,11 +2473,11 @@ class Dashboard(ttk.Frame):
                 text="Done",
                 width=90,
                 height=32,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["accent"],
                 hover_color=C["accent_hover"],
                 text_color=C["paper"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
                 command=lambda: self._close_assist_panel("done"),
             ).pack(side=tk.LEFT)
             ctk.CTkButton(
@@ -2460,11 +2485,11 @@ class Dashboard(ttk.Frame):
                 text="Skip",
                 width=70,
                 height=32,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["surface"],
                 hover_color=C["card_hi"],
                 text_color=C["ink"],
-                font=("Helvetica Neue", 12),
+                font=(UI, 12),
                 command=lambda: self._close_assist_panel("skip"),
             ).pack(side=tk.LEFT, padx=6)
             ctk.CTkButton(
@@ -2472,11 +2497,11 @@ class Dashboard(ttk.Frame):
                 text="Retry",
                 width=70,
                 height=32,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["surface"],
                 hover_color=C["card_hi"],
                 text_color=C["ink"],
-                font=("Helvetica Neue", 12),
+                font=(UI, 12),
                 command=lambda: self._close_assist_panel("retry"),
             ).pack(side=tk.LEFT)
             ctk.CTkButton(
@@ -2484,11 +2509,11 @@ class Dashboard(ttk.Frame):
                 text="Payload",
                 width=70,
                 height=32,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["ink"],
                 hover_color="#2a2a2a",
                 text_color=C["paper"],
-                font=("Menlo", 10),
+                font=(MONO, 10),
                 command=self._assist_copy_payload,
             ).pack(side=tk.RIGHT)
 
@@ -2740,7 +2765,7 @@ class Dashboard(ttk.Frame):
             row = ctk.CTkFrame(
                 self.employee_grid,
                 fg_color=C["accent_dim"] if selected else "transparent",
-                corner_radius=2,
+                corner_radius=10,
                 cursor="hand2",
                 height=32,
             )
@@ -2749,7 +2774,7 @@ class Dashboard(ttk.Frame):
             label = ctk.CTkLabel(
                 row,
                 text=name,
-                font=("Helvetica Neue", 12, "bold") if selected else ("Helvetica Neue", 12),
+                font=(UI, 12, "bold") if selected else (UI, 12),
                 text_color=C["ink"],
                 anchor="w",
             )
@@ -2817,7 +2842,7 @@ class Dashboard(ttk.Frame):
                 ctk.CTkLabel(
                     host,
                     text=label.upper(),
-                    font=("Helvetica Neue", 9, "bold"),
+                    font=(UI, 9, "bold"),
                     text_color=C["muted"],
                     anchor="w",
                 ).pack(fill=tk.X, pady=(10, 3))
@@ -2825,7 +2850,7 @@ class Dashboard(ttk.Frame):
                     host,
                     textvariable=var,
                     height=34,
-                    corner_radius=2,
+                    corner_radius=10,
                     border_width=1,
                     border_color=C["border"],
                     fg_color=C["surface"],
@@ -2833,7 +2858,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 host,
                 text="EMPLOYEE",
-                font=("Helvetica Neue", 9, "bold"),
+                font=(UI, 9, "bold"),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X, pady=(10, 3))
@@ -2842,7 +2867,7 @@ class Dashboard(ttk.Frame):
                 variable=employee,
                 values=names,
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["surface"],
                 button_color=C["card_hi"],
                 text_color=C["text"],
@@ -2870,11 +2895,11 @@ class Dashboard(ttk.Frame):
                 text="Add",
                 command=save,
                 height=36,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["accent"],
                 hover_color=C["accent_hover"],
                 text_color=C["paper"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
             ).pack(fill=tk.X, pady=(12, 0))
 
         self._open_sheet("Log spend", build)
@@ -2901,7 +2926,7 @@ class Dashboard(ttk.Frame):
                 self.budget_overview,
                 text="Spend limits appear after import",
                 text_color=C["muted"],
-                font=("Helvetica Neue", 10),
+                font=(UI, 10),
             ).pack(anchor="w", padx=4, pady=4)
             return
         for profile in visible:
@@ -2914,14 +2939,14 @@ class Dashboard(ttk.Frame):
                 text=name,
                 width=56,
                 anchor="w",
-                font=("Helvetica Neue", 10, "bold"),
+                font=(UI, 10, "bold"),
                 text_color=C["text"],
             ).pack(side=tk.LEFT)
             if budget is None:
                 ctk.CTkLabel(
                     row,
                     text="no limit",
-                    font=("Helvetica Neue", 9),
+                    font=(UI, 9),
                     text_color=C["muted"],
                 ).pack(side=tk.LEFT)
                 continue
@@ -2940,7 +2965,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 row,
                 text=f"${spent:.0f}/${limit:.0f}",
-                font=("Helvetica Neue", 9),
+                font=(UI, 9),
                 text_color=C["muted"],
             ).pack(side=tk.RIGHT)
 
@@ -2971,7 +2996,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 host,
                 text="CURRENT SPEND",
-                font=("Helvetica Neue", 9, "bold"),
+                font=(UI, 9, "bold"),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X, pady=(8, 3))
@@ -2979,7 +3004,7 @@ class Dashboard(ttk.Frame):
                 host,
                 textvariable=spent_var,
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 border_width=1,
                 border_color=C["border"],
                 fg_color=C["surface"],
@@ -2987,7 +3012,7 @@ class Dashboard(ttk.Frame):
             ctk.CTkLabel(
                 host,
                 text="SPEND LIMIT",
-                font=("Helvetica Neue", 9, "bold"),
+                font=(UI, 9, "bold"),
                 text_color=C["muted"],
                 anchor="w",
             ).pack(fill=tk.X, pady=(10, 3))
@@ -2995,7 +3020,7 @@ class Dashboard(ttk.Frame):
                 host,
                 textvariable=limit_var,
                 height=34,
-                corner_radius=2,
+                corner_radius=10,
                 border_width=1,
                 border_color=C["border"],
                 fg_color=C["surface"],
@@ -3052,11 +3077,11 @@ class Dashboard(ttk.Frame):
                 text="Save budget",
                 command=save,
                 height=36,
-                corner_radius=2,
+                corner_radius=10,
                 fg_color=C["accent"],
                 hover_color=C["accent_hover"],
                 text_color=C["paper"],
-                font=("Helvetica Neue", 12, "bold"),
+                font=(UI, 12, "bold"),
             )
             save_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
             if on_done is not None:
@@ -3066,11 +3091,11 @@ class Dashboard(ttk.Frame):
                     command=finish,
                     width=72,
                     height=36,
-                    corner_radius=2,
+                    corner_radius=10,
                     fg_color=C["surface"],
                     hover_color=C["card_hi"],
                     text_color=C["ink"],
-                    font=("Helvetica Neue", 12),
+                    font=(UI, 12),
                 ).pack(side=tk.LEFT, padx=(8, 0))
 
         self._open_sheet(
