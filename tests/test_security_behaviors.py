@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -24,14 +25,17 @@ from employee_profiles import (
     EmployeeProfileStore,
     ProfileSyncService,
 )
-from bw_import_converter import BitwardenConverter
+from bw_import_converter import BitwardenConverter, strip_rtf_to_text
 from data_retention import DataRetentionManager
 from integrations import (
     APP_PASSWORD_HASH_KEY,
+    APP_PIN_HASH_KEY,
     APP_SESSION_CREATED_KEY,
     APP_SESSION_TOKEN_KEY,
+    BW_SECRET_KEY,
     BitwardenService,
     CredentialStore,
+    PinAuth,
     SessionManager,
 )
 from gui import Dashboard
@@ -80,6 +84,18 @@ class FakeBitwarden:
         return None
 
     def import_json(self, _payload, _collection):
+        return None
+
+    def create_item(self, payload):
+        return {"id": "fake-temp-item", "name": payload.get("name", "")}
+
+    def sync(self):
+        return None
+
+    def delete_item_permanently(self, _item_id):
+        return None
+
+    def trash_item(self, _item_id):
         return None
 
 
@@ -180,41 +196,44 @@ class AppSessionTests(unittest.TestCase):
 
 
 class CredentialMigrationTests(unittest.TestCase):
-    def test_verified_migration_removes_plaintext_source(self):
+    def test_legacy_file_migrates_into_secure_store_and_is_removed(self):
         with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "credentials.json"
-            source.write_text('{"token": "secret"}', encoding="utf-8")
-            keychain = {}
-
-            def set_password(_service, key, value):
-                keychain[key] = value
-
+            source = Path(directory) / "legacy_credentials.json"
+            dest = Path(directory) / "secure" / "credentials.json"
+            source.write_text('{"bw_email": "ops@example.com", "token": "secret"}', encoding="utf-8")
             with (
                 mock.patch.object(integrations, "CREDENTIALS_FILE", source),
-                mock.patch.object(
-                    integrations.keyring,
-                    "get_password",
-                    side_effect=lambda _service, key: keychain.get(key),
-                ),
-                mock.patch.object(integrations.keyring, "set_password", side_effect=set_password),
+                mock.patch.object(integrations, "SECURE_CREDENTIALS_FILE", dest),
             ):
-                CredentialStore()
-            self.assertEqual(keychain["token"], "secret")
+                store = CredentialStore()
+            self.assertEqual(store.get("bw_email"), "ops@example.com")
+            self.assertEqual(store.get("token"), "secret")
             self.assertFalse(source.exists())
+            self.assertTrue(dest.exists())
+            self.assertEqual(stat.S_IMODE(dest.stat().st_mode), 0o600)
 
-    def test_failed_keychain_verification_keeps_plaintext_source(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "credentials.json"
-            source.write_text('{"token": "secret"}', encoding="utf-8")
-            with (
-                mock.patch.object(integrations, "CREDENTIALS_FILE", source),
-                mock.patch.object(integrations.keyring, "get_password", return_value=None),
-                mock.patch.object(integrations.keyring, "set_password"),
-            ):
-                with self.assertLogs(level="ERROR"):
-                    CredentialStore()
-            self.assertTrue(source.exists())
-            self.assertEqual(source.read_text(encoding="utf-8"), '{"token": "secret"}')
+
+class PinAuthTests(unittest.TestCase):
+    def test_accepts_letters_numbers_or_both(self):
+        self.assertIsNone(PinAuth.validate_pin("Ab12"))
+        self.assertIsNone(PinAuth.validate_pin("ops7"))
+        self.assertIsNone(PinAuth.validate_pin("1234"))
+        self.assertIsNone(PinAuth.validate_pin("AbCdEf12"))
+        self.assertIn("4–8", PinAuth.validate_pin("ab") or "")
+        self.assertIn("letters and numbers", PinAuth.validate_pin("ab!234") or "")
+
+    def test_pin_encrypts_and_unlocks_master_password(self):
+        store = MemoryCredentialStore()
+        auth = PinAuth(store)
+        err = auth.setup(email="ops@example.com", master_password="horse battery", pin="Ops7")
+        self.assertIsNone(err)
+        self.assertTrue(auth.has_pin())
+        self.assertNotEqual(store.get(BW_SECRET_KEY), "horse battery")
+        self.assertNotEqual(store.get(APP_PIN_HASH_KEY), "Ops7")
+        self.assertTrue(auth.verify_pin("Ops7"))
+        self.assertFalse(auth.verify_pin("wrong"))
+        self.assertEqual(auth.unlock_master_password("Ops7"), "horse battery")
+        self.assertIsNone(auth.unlock_master_password("wrong"))
 
 
 class TransactionDatabaseTests(unittest.TestCase):
@@ -574,6 +593,26 @@ class OnboardingTests(unittest.TestCase):
                 {field["name"] for field in identity["fields"]},
             )
 
+    def test_rtf_hq_export_strips_controls_and_converts(self):
+        rtf = (
+            r"{\rtf1\ansi\ansicpg1252{\fonttbl\f0\fswiss Helvetica;}"
+            r"\f0\fs24 \cf0 n_id|firstname|lastname|dob|cc|cvv|expmonth|expyear|email"
+            r"\line 99|Ada|Lovelace|12/10/1815|4111111111111111|123|04|2030|ada@example.com}"
+        )
+        plain = strip_rtf_to_text(rtf)
+        self.assertIn("n_id|firstname|lastname", plain)
+        self.assertIn("Ada|Lovelace", plain)
+        self.assertNotIn("\\rtf", plain)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "HQ-882920.rtf"
+            source.write_text(rtf, encoding="utf-8")
+            converter = BitwardenConverter(source, root / "output.json", "password")
+            items, employees = converter._process_input_file()
+            self.assertEqual(len(employees), 1)
+            self.assertEqual(employees[0]["first_name"], "Ada")
+            self.assertEqual(len(items), 3)
+
     def test_failed_import_disposes_generated_json_but_keeps_source(self):
         audit = FakeAudit()
         disposed = []
@@ -715,9 +754,9 @@ class AssistHelpersTests(unittest.TestCase):
             "password": "secret",
             "postal": "02139",
         }
-        with mock.patch("account_automation.webbrowser.open") as open_browser:
+        with mock.patch("account_automation.open_ops_browser", return_value={"ok": True, "detail": "ops"}) as open_ops:
             result = creator.create_marriott_account(personal, "adalovelace1815")
-        open_browser.assert_called_once()
+        open_ops.assert_called_once()
         self.assertEqual(result["status"], "manual_only")
         self.assertEqual(result["service"], "Marriott")
         self.assertEqual(result["filled_fields"], [])
@@ -726,6 +765,132 @@ class AssistHelpersTests(unittest.TestCase):
         self.assertIn("postal: 02139", result["payload"])
         self.assertEqual(result["personal_data"]["confirm_password"], "secret")
 
+    def test_arrange_windows_reports_non_mac_clearly(self):
+        from account_automation import arrange_windows_for_assist
+
+        with mock.patch("account_automation.sys.platform", "linux"):
+            result = arrange_windows_for_assist()
+        self.assertFalse(result["ok"])
+        self.assertIn("macOS", result["detail"])
+
+    def test_temp_autofill_payload_links_site_field_names(self):
+        from account_automation import (
+            TemporaryAutofillManager,
+            build_temp_autofill_payload,
+        )
+
+        personal = {
+            "first_name": "Cameron",
+            "last_name": "Cohen",
+            "email": "cameroncohen1994@outlook.com",
+            "username": "cameroncohen1994",
+            "password": "DemoPass1!",
+            "postal": "20002",
+        }
+        outlook = build_temp_autofill_payload("Outlook", personal, "cameroncohen1994")
+        self.assertTrue(outlook["payload"]["name"].startswith("DOWNLOWD · TEMP · Outlook"))
+        self.assertEqual(outlook["payload"]["login"]["username"], "cameroncohen1994")
+        field_names = {f["name"] for f in outlook["payload"]["fields"]}
+        self.assertIn("MemberName", field_names)
+        self.assertIn("usernameInput", field_names)
+
+        marriott = build_temp_autofill_payload("Marriott", personal, "cameroncohen1994")
+        marriott_names = {f["name"] for f in marriott["payload"]["fields"]}
+        self.assertIn("firstName", marriott_names)
+        self.assertIn("postalCode", marriott_names)
+        self.assertIn("confirmPassword", marriott_names)
+
+        bw = mock.Mock()
+        bw.create_item.return_value = {"id": "temp-1"}
+        manager = TemporaryAutofillManager(bw)
+        pushed = manager.push("Hyatt", personal, "cameroncohen1994")
+        self.assertTrue(pushed["autofill_ready"])
+        self.assertEqual(pushed["autofill_item_id"], "temp-1")
+        self.assertIn("firstName", pushed["autofill_linked_fields"])
+        bw.sync.assert_called()
+        removed = manager.cleanup()
+        self.assertEqual(removed, ["temp-1"])
+        bw.delete_item_permanently.assert_called_once_with("temp-1")
+
+    def test_chrome_ops_profile_writes_setup_desk_and_privacy_prefs(self):
+        from chrome_ops_profile import ChromeOpsProfile, RECOMMENDED_EXTENSIONS
+
+        with tempfile.TemporaryDirectory() as directory:
+            profile = ChromeOpsProfile(
+                Path(directory) / "ops",
+                extensions_root=Path(directory) / "exts",
+            )
+            root = profile.ensure(install_extensions=False)
+            self.assertTrue(root.exists())
+            prefs = json.loads((profile.default_dir / "Preferences").read_text(encoding="utf-8"))
+            self.assertEqual(prefs["profile"]["name"], "DOWNLOWd Ops")
+            self.assertFalse(prefs["credentials_enable_service"])
+            self.assertFalse(prefs["autofill"]["profile_enabled"])
+            self.assertEqual(prefs["webrtc"]["ip_handling_policy"], "disable_non_proxied_udp")
+            html = profile.setup_page.read_text(encoding="utf-8")
+            self.assertIn("Bitwarden", html)
+            self.assertIn("uBlock Origin Lite", html)
+            self.assertIn("Canvas Fingerprint Defender", html)
+            self.assertIn("WebRTC Control", html)
+            for ext in RECOMMENDED_EXTENSIONS:
+                self.assertIn(ext["id"], html)
+            cleared = profile.clear_site_data()
+            self.assertTrue(cleared["ok"])
+
+    def test_chrome_ops_crx_unpack_and_load_extension_arg(self):
+        import zipfile
+
+        from chrome_ops_profile import (
+            ChromeOpsProfile,
+            RECOMMENDED_EXTENSIONS,
+            extract_crx_payload,
+            unpack_crx,
+        )
+
+        # Minimal CRX3: Cr24 + version 3 + empty header + zip with manifest.
+        manifest = b'{"name":"Test Ext","version":"1.0","manifest_version":3}'
+        buf = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+        try:
+            with zipfile.ZipFile(buf, "w") as zf:
+                zf.writestr("manifest.json", manifest)
+            buf.close()
+            zip_bytes = Path(buf.name).read_bytes()
+        finally:
+            Path(buf.name).unlink(missing_ok=True)
+
+        header_size = 0
+        crx = b"Cr24" + struct.pack("<II", 3, header_size) + zip_bytes
+        self.assertEqual(extract_crx_payload(crx), zip_bytes)
+        self.assertEqual(extract_crx_payload(zip_bytes), zip_bytes)
+
+        with tempfile.TemporaryDirectory() as directory:
+            crx_path = Path(directory) / "test.crx"
+            crx_path.write_bytes(crx)
+            dest = Path(directory) / "unpacked"
+            unpack_crx(crx_path, dest)
+            self.assertTrue((dest / "manifest.json").exists())
+
+            # Seed one auto-install id so load_extension_arg picks it up.
+            ext_id = next(ext["id"] for ext in RECOMMENDED_EXTENSIONS if ext.get("auto_install", True))
+            profile = ChromeOpsProfile(
+                Path(directory) / "ops",
+                extensions_root=Path(directory) / "exts",
+            )
+            installed = Path(directory) / "exts" / ext_id
+            installed.mkdir(parents=True)
+            (installed / "manifest.json").write_text(
+                '{"name":"x","version":"1","manifest_version":3}',
+                encoding="utf-8",
+            )
+            arg = profile.load_extension_arg()
+            self.assertIsNotNone(arg)
+            self.assertTrue(arg.startswith("--load-extension="))
+            self.assertIn(str(installed), arg)
+            args = profile.launch_args("https://example.com", install_extensions=False)
+            self.assertTrue(any(a.startswith("--load-extension=") for a in args))
+            self.assertTrue(
+                any("DisableLoadExtensionCommandLineSwitch" in a for a in args)
+            )
 
 class BitwardenItemApiTests(unittest.TestCase):
     def test_create_item_encodes_payload_without_writing_it_to_disk(self):
