@@ -235,6 +235,61 @@ class PinAuthTests(unittest.TestCase):
         self.assertEqual(auth.unlock_master_password("Ops7"), "horse battery")
         self.assertIsNone(auth.unlock_master_password("wrong"))
 
+    def test_new_pin_uses_stronger_kdf_and_persists(self):
+        store = MemoryCredentialStore()
+        auth = PinAuth(store)
+        self.assertIsNone(
+            auth.setup(email="ops@example.com", master_password="pw12345", pin="Ops7")
+        )
+        self.assertEqual(
+            store.get(integrations.APP_PIN_ITERS_KEY),
+            str(integrations.PIN_KDF_ITERATIONS),
+        )
+        # A fresh PinAuth over the same store (a "relaunch") still unlocks.
+        self.assertEqual(PinAuth(store).unlock_master_password("Ops7"), "pw12345")
+
+    def test_legacy_pin_without_iters_uses_default_cost(self):
+        store = MemoryCredentialStore()
+        salt = bytes(range(16))
+        iters = integrations.PBKDF2_ITERATIONS
+        token = PinAuth._fernet_for_pin("Ops7", salt, iters).encrypt(b"legacy-pw")
+        store.update(
+            {
+                "bw_email": "ops@example.com",
+                integrations.APP_PIN_SALT_KEY: salt.hex(),
+                APP_PIN_HASH_KEY: PinAuth._hash_pin("Ops7", salt, iters),
+                BW_SECRET_KEY: token.decode("ascii"),
+            }
+        )
+        auth = PinAuth(store)
+        self.assertTrue(auth.has_pin())
+        self.assertTrue(auth.verify_pin("Ops7"))
+        self.assertEqual(auth.unlock_master_password("Ops7"), "legacy-pw")
+
+    def test_lockout_after_max_failed_attempts(self):
+        store = MemoryCredentialStore()
+        auth = PinAuth(store)
+        auth.setup(email="ops@example.com", master_password="pw12345", pin="Ops7")
+        outcome = {}
+        for _ in range(integrations.PIN_MAX_ATTEMPTS):
+            outcome = auth.attempt_unlock("Wrong9")
+        self.assertEqual(outcome["status"], "locked")
+        self.assertGreater(auth.lock_remaining(), 0)
+        # Even the correct PIN is refused while the lockout is active.
+        self.assertEqual(auth.attempt_unlock("Ops7")["status"], "locked")
+
+    def test_correct_pin_resets_failure_count(self):
+        store = MemoryCredentialStore()
+        auth = PinAuth(store)
+        auth.setup(email="ops@example.com", master_password="pw12345", pin="Ops7")
+        self.assertEqual(auth.attempt_unlock("Wrong9")["status"], "bad_pin")
+        self.assertEqual(auth.attempt_unlock("Wrong9")["status"], "bad_pin")
+        ok = auth.attempt_unlock("Ops7")
+        self.assertEqual(ok["status"], "ok")
+        self.assertEqual(ok["password"], "pw12345")
+        self.assertEqual(auth._fail_count(), 0)
+        self.assertEqual(auth.lock_remaining(), 0)
+
 
 class TransactionDatabaseTests(unittest.TestCase):
     def test_permissions_and_missing_delete(self):

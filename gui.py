@@ -714,17 +714,41 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
             anchor="w",
         ).pack(fill=tk.X, pady=(0, 4))
 
+        def refresh_lock():
+            remaining = self.pin_auth.lock_remaining()
+            if remaining > 0:
+                status_var.set(f"Too many attempts — locked for {remaining}s")
+                self.after(1000, refresh_lock)
+            elif status_var.get().startswith("Too many attempts"):
+                status_var.set("")
+
         def do_unlock():
             pin = pin_var.get()
             err = self.pin_auth.validate_pin(pin)
             if err:
                 messagebox.showerror("Invalid PIN", err, parent=self)
                 return
-            master = self.pin_auth.unlock_master_password(pin)
-            if not master:
-                self.audit.log_authentication(False, method="pin")
-                messagebox.showerror("Incorrect PIN", "That PIN did not unlock this workspace.", parent=self)
+            outcome = self.pin_auth.attempt_unlock(pin)
+            if outcome["status"] == "locked":
+                self.audit.log_authentication(False, method="pin_locked")
+                refresh_lock()
+                messagebox.showerror(
+                    "Too many attempts",
+                    f"PIN entry is locked. Try again in {outcome['remaining']} seconds.",
+                    parent=self,
+                )
                 return
+            if outcome["status"] == "bad_pin":
+                self.audit.log_authentication(False, method="pin")
+                left = outcome["attempts_left"]
+                message = "That PIN did not unlock this workspace."
+                if left <= 2:
+                    message += (
+                        f"\n\n{left} attempt(s) left before a timed lockout."
+                    )
+                messagebox.showerror("Incorrect PIN", message, parent=self)
+                return
+            master = outcome["password"]
             email_addr = str(self.credential_store.get("bw_email", "") or "").strip()
             if not email_addr:
                 messagebox.showerror("Missing email", "No Bitwarden email on file. Reset PIN setup.", parent=self)
@@ -757,6 +781,7 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         _auth_primary_button(form, "Unlock", do_unlock)
         pin_entry.bind("<Return>", lambda _event: do_unlock())
         pin_entry.focus()
+        refresh_lock()
         ctk.CTkButton(
             form,
             text="Forgot PIN — reset setup",

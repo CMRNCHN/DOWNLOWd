@@ -24,11 +24,22 @@ APP_SESSION_TOKEN_KEY = "app_session_token"
 APP_SESSION_CREATED_KEY = "app_session_created_at"
 APP_PIN_HASH_KEY = "app_pin_hash"
 APP_PIN_SALT_KEY = "app_pin_salt"
+APP_PIN_ITERS_KEY = "app_pin_iters"
+APP_PIN_FAILS_KEY = "app_pin_fails"
+APP_PIN_LOCK_UNTIL_KEY = "app_pin_lock_until"
 BW_SECRET_KEY = "bw_master_secret"
 PBKDF2_ITERATIONS = 200_000
+# New PINs use a higher KDF cost to slow offline brute-force of the on-disk
+# encrypted master password; legacy PINs keep working via the stored count.
+PIN_KDF_ITERATIONS = 600_000
 APP_SESSION_TIMEOUT_SECONDS = 3600
 PIN_MIN_LEN = 4
 PIN_MAX_LEN = 8
+# Failed-attempt lockout: after this many wrong PINs, entry is temporarily
+# locked with an escalating backoff (mitigates in-app guessing).
+PIN_MAX_ATTEMPTS = 5
+PIN_LOCK_BASE_SECONDS = 30
+PIN_LOCK_MAX_SECONDS = 900
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -165,16 +176,16 @@ class PinAuth:
         )
 
     @staticmethod
-    def _hash_pin(pin: str, salt: bytes) -> str:
+    def _hash_pin(pin: str, salt: bytes, iterations: int = PBKDF2_ITERATIONS) -> str:
         return hashlib.pbkdf2_hmac(
             "sha256",
             pin.encode("utf-8"),
             salt,
-            PBKDF2_ITERATIONS,
+            iterations,
         ).hex()
 
     @staticmethod
-    def _fernet_for_pin(pin: str, salt: bytes):
+    def _fernet_for_pin(pin: str, salt: bytes, iterations: int = PBKDF2_ITERATIONS):
         import base64
 
         from cryptography.fernet import Fernet
@@ -185,10 +196,18 @@ class PinAuth:
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=PBKDF2_ITERATIONS,
+            iterations=iterations,
         )
         key = base64.urlsafe_b64encode(kdf.derive(pin.encode("utf-8")))
         return Fernet(key)
+
+    def _iterations(self) -> int:
+        """KDF cost stored with this PIN (legacy PINs default to the old cost)."""
+        raw = self.store.get(APP_PIN_ITERS_KEY)
+        try:
+            return int(raw) if raw else PBKDF2_ITERATIONS
+        except (TypeError, ValueError):
+            return PBKDF2_ITERATIONS
 
     def setup(self, *, email: str, master_password: str, pin: str) -> Optional[str]:
         error = self.validate_pin(pin)
@@ -201,13 +220,19 @@ class PinAuth:
             return "Enter your Bitwarden master password."
         pin = self.normalize_pin(pin)
         salt = secrets.token_bytes(16)
-        token = self._fernet_for_pin(pin, salt).encrypt(master_password.encode("utf-8"))
+        iterations = PIN_KDF_ITERATIONS
+        token = self._fernet_for_pin(pin, salt, iterations).encrypt(
+            master_password.encode("utf-8")
+        )
         self.store.update(
             {
                 "bw_email": email,
                 APP_PIN_SALT_KEY: salt.hex(),
-                APP_PIN_HASH_KEY: self._hash_pin(pin, salt),
+                APP_PIN_HASH_KEY: self._hash_pin(pin, salt, iterations),
+                APP_PIN_ITERS_KEY: str(iterations),
                 BW_SECRET_KEY: token.decode("ascii"),
+                APP_PIN_FAILS_KEY: "0",
+                APP_PIN_LOCK_UNTIL_KEY: "0",
             }
         )
         return None
@@ -222,7 +247,9 @@ class PinAuth:
             salt = bytes.fromhex(str(salt_hex))
         except ValueError:
             return False
-        return secrets.compare_digest(self._hash_pin(pin, salt), str(stored_hash))
+        return secrets.compare_digest(
+            self._hash_pin(pin, salt, self._iterations()), str(stored_hash)
+        )
 
     def unlock_master_password(self, pin: str) -> Optional[str]:
         if not self.verify_pin(pin):
@@ -234,7 +261,7 @@ class PinAuth:
         try:
             salt = bytes.fromhex(str(salt_hex))
             return (
-                self._fernet_for_pin(self.normalize_pin(pin), salt)
+                self._fernet_for_pin(self.normalize_pin(pin), salt, self._iterations())
                 .decrypt(str(secret).encode("ascii"))
                 .decode("utf-8")
             )
@@ -242,12 +269,77 @@ class PinAuth:
             logging.error("Failed to decrypt Bitwarden secret with PIN", exc_info=True)
             return None
 
+    # --- Failed-attempt lockout -------------------------------------------
+    def _fail_count(self) -> int:
+        try:
+            return int(self.store.get(APP_PIN_FAILS_KEY) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def lock_remaining(self) -> int:
+        """Seconds until PIN entry is allowed again (0 when not locked)."""
+        raw = self.store.get(APP_PIN_LOCK_UNTIL_KEY)
+        try:
+            until = float(raw) if raw else 0.0
+        except (TypeError, ValueError):
+            until = 0.0
+        return max(0, int(round(until - time.time())))
+
+    def reset_failures(self) -> None:
+        self.store.update({APP_PIN_FAILS_KEY: "0", APP_PIN_LOCK_UNTIL_KEY: "0"})
+
+    def _register_failure(self) -> int:
+        fails = self._fail_count() + 1
+        updates = {APP_PIN_FAILS_KEY: str(fails)}
+        if fails >= PIN_MAX_ATTEMPTS:
+            over = fails - PIN_MAX_ATTEMPTS
+            lock = min(PIN_LOCK_BASE_SECONDS * (2 ** over), PIN_LOCK_MAX_SECONDS)
+            updates[APP_PIN_LOCK_UNTIL_KEY] = str(time.time() + lock)
+        self.store.update(updates)
+        return fails
+
+    def attempt_unlock(self, pin: str) -> Dict[str, Any]:
+        """Verify a PIN with lockout enforcement.
+
+        Returns a dict with ``status`` one of ``ok`` | ``bad_pin`` | ``locked``,
+        the recovered ``password`` (on ok), ``remaining`` lock seconds, and
+        ``attempts_left`` before the next timed lockout.
+        """
+        remaining = self.lock_remaining()
+        if remaining > 0:
+            return {
+                "status": "locked",
+                "remaining": remaining,
+                "attempts_left": 0,
+                "password": None,
+            }
+        password = self.unlock_master_password(pin)
+        if password is None:
+            fails = self._register_failure()
+            rem = self.lock_remaining()
+            return {
+                "status": "locked" if rem > 0 else "bad_pin",
+                "remaining": rem,
+                "attempts_left": max(0, PIN_MAX_ATTEMPTS - fails),
+                "password": None,
+            }
+        self.reset_failures()
+        return {
+            "status": "ok",
+            "remaining": 0,
+            "attempts_left": PIN_MAX_ATTEMPTS,
+            "password": password,
+        }
+
     def clear(self) -> None:
         self.store.update(
             {
                 APP_PIN_HASH_KEY: "",
                 APP_PIN_SALT_KEY: "",
+                APP_PIN_ITERS_KEY: "",
                 BW_SECRET_KEY: "",
+                APP_PIN_FAILS_KEY: "0",
+                APP_PIN_LOCK_UNTIL_KEY: "0",
             }
         )
 
