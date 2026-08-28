@@ -66,47 +66,59 @@ from transaction_db import TransactionDatabase
 
 DOWNLOADS = Path.home() / "Downloads"
 
-# Calm ops desk — soft sage wash, rounded paper, olive accent.
+# shadcn-inspired neutral palette on the cool "slate" base: white cards,
+# hairline borders, a single near-black primary, muted secondaries. Keys match
+# the set the rest of this module references.
 C = {
-    "bg": "#e4e8e2",
-    "bg_wash": "#d5dbd3",
-    "surface": "#eef1ec",
-    "card": "#f7f8f5",
-    "card_hi": "#e1e6df",
-    "row_a": "#eef1ec",
-    "row_b": "#f3f5f1",
-    "border": "#c5cdc0",
-    "border_soft": "#d7ddd4",
-    "text": "#1a1f1a",
-    "muted": "#667066",
-    "accent": "#3a5f48",
-    "accent_hover": "#2d4a38",
-    "accent_dim": "#dce8df",
-    "success": "#2f6b4a",
-    "warn": "#8a6a2b",
-    "danger": "#8b2e2e",
-    "danger_hover": "#f3dede",
-    "ink": "#1a1f1a",
-    "paper": "#f7f8f5",
-    "status": "#8a9186",
-    "status_on_dark": "#c5cdc0",
-    "chrome": "#2c332c",
+    "bg": "#f1f5f9",           # slate-100  app background
+    "bg_wash": "#e2e8f0",      # slate-200  deeper wash behind panels
+    "surface": "#f1f5f9",      # slate-100  secondary / muted panels
+    "card": "#ffffff",         # white      cards & popovers
+    "card_hi": "#e2e8f0",      # slate-200  hover
+    "row_a": "#ffffff",        # white      table row (even)
+    "row_b": "#f8fafc",        # slate-50   table row (odd)
+    "border": "#e2e8f0",       # slate-200  hairline border
+    "border_soft": "#f1f5f9",  # slate-100  softer divider
+    "text": "#0f172a",         # slate-900  foreground
+    "muted": "#64748b",        # slate-500  muted foreground
+    "accent": "#0f172a",       # slate-900  primary
+    "accent_hover": "#1e293b", # slate-800  primary hover
+    "accent_dim": "#e2e8f0",   # slate-200  subtle selection tint
+    "success": "#16a34a",      # green-600
+    "warn": "#f59e0b",         # amber-500
+    "danger": "#ef4444",       # red-500
+    "danger_hover": "#fee2e2", # red-100    destructive hover
+    "ink": "#0f172a",          # slate-900  dark text / marks
+    "paper": "#ffffff",        # white      text on primary
+    "status": "#64748b",       # slate-500
+    "status_on_dark": "#cbd5e1",  # slate-300  text on the dark chrome bar
+    "chrome": "#0f172a",       # slate-900  dark chrome (toolbar / footer)
 }
 
-# Radii — softer chrome, less boxy panels.
-R_PANEL = 16
-R_CTRL = 12
-R_BTN = 11
-R_CHIP = 9
-R_MARK = 14
+# Radii — rounded but crisp (shadcn leans less pill-y than the sage build).
+R_PANEL = 12
+R_CTRL = 10
+R_BTN = 8
+R_CHIP = 8
+R_MARK = 10
 
-# Expressive UI type; Menlo only for monospace vault/data.
-F_DISPLAY = ("Avenir Next", 20, "bold")
-F_TITLE = ("Avenir Next", 14, "bold")
-F_BODY = ("Avenir Next", 12)
-F_CAPTION = ("Avenir Next", 10)
-F_DATA = ("Menlo", 10)
-F_BRAND = ("Avenir Next", 16, "bold")
+# Typography: SF on macOS (the target), Helvetica Neue fallback elsewhere;
+# monospace only for vault/data.
+if sys.platform == "darwin":
+    UI = "SF Pro Text"
+    UI_DISPLAY = "SF Pro Display"
+    MONO = "SF Mono"
+else:
+    UI = "Helvetica Neue"
+    UI_DISPLAY = "Helvetica Neue"
+    MONO = "Menlo"
+
+F_DISPLAY = (UI_DISPLAY, 20, "bold")
+F_TITLE = (UI, 14, "bold")
+F_BODY = (UI, 12)
+F_CAPTION = (UI, 10)
+F_DATA = (MONO, 10)
+F_BRAND = (UI_DISPLAY, 16, "bold")
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("green")
@@ -325,7 +337,7 @@ class BrandGlyph(tk.Canvas):
             size / 2 + 0.5,
             text="DL",
             fill=stroke,
-            font=("Avenir Next", max(9, size // 3), "bold"),
+            font=(UI, max(9, size // 3), "bold"),
         )
 
 
@@ -365,7 +377,7 @@ class InitialsMark(tk.Canvas):
             size / 2 + 0.5,
             text=(initials or "—")[:2].upper(),
             fill=C["paper"] if selected else C["accent"],
-            font=("Avenir Next", 10, "bold"),
+            font=(UI, 10, "bold"),
         )
 
 
