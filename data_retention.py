@@ -18,7 +18,8 @@ from typing import Any, Callable, Dict, List, Optional
 from audit_logger import AUDIT_LOG_FILE, get_audit_logger
 
 RETENTION_DATA_FILE = Path.home() / ".downlowd_retention.json"
-LOGS_DIR = Path.cwd() / "logs"
+# Absolute path — .app launches with cwd="/", so Path.cwd()/logs fails.
+LOGS_DIR = Path.home() / ".downlowd" / "logs"
 
 
 class DataRetentionManager:

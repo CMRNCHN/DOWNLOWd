@@ -303,6 +303,118 @@ return browserName
         return result
 
 
+def focus_assist_browser(title_hint: str = "DOWNLOWd Assist") -> bool:
+    """Bring the assist browser window to the front (macOS)."""
+    if sys.platform != "darwin":
+        return False
+    # Escape for AppleScript string
+    safe = title_hint.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'''
+    tell application "System Events"
+      set procs to every process whose background only is false
+      repeat with p in procs
+        try
+          set wins to windows of p
+          repeat with w in wins
+            if name of w contains "{safe}" then
+              set frontmost of p to true
+              perform action "AXRaise" of w
+              return "ok"
+            end if
+          end repeat
+        end try
+      end repeat
+    end tell
+    return "miss"
+    '''
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        return proc.returncode == 0 and "ok" in (proc.stdout or "")
+    except Exception:
+        return False
+
+
+def open_assist_browser(url: str, *, title: str = "DOWNLOWd Assist") -> str:
+    """
+    Open signup URL in an in-app WebKit window when possible.
+
+    Returns: "webview" | "system" | "error"
+    """
+    if not url:
+        return "error"
+    try:
+        import webview  # type: ignore
+    except Exception:
+        try:
+            webbrowser.open(url)
+            return "system"
+        except Exception:
+            return "error"
+
+    # One shared webview window; navigate if already open.
+    existing = getattr(open_assist_browser, "_window", None)
+    if existing is not None:
+        try:
+            existing.set_title(title)
+            existing.load_url(url)
+            focus_assist_browser(title)
+            return "webview"
+        except Exception:
+            open_assist_browser._window = None  # type: ignore[attr-defined]
+
+    def _run() -> None:
+        try:
+            window = webview.create_window(
+                title,
+                url,
+                width=980,
+                height=780,
+                confirm_close=False,
+            )
+            open_assist_browser._window = window  # type: ignore[attr-defined]
+            webview.start(debug=False)
+        except Exception:
+            logging.exception("Assist webview failed; falling back to system browser")
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+        finally:
+            open_assist_browser._window = None  # type: ignore[attr-defined]
+
+    if getattr(open_assist_browser, "_thread", None) and open_assist_browser._thread.is_alive():  # type: ignore[attr-defined]
+        # Thread already running a webview loop — open system browser as backup.
+        try:
+            webbrowser.open(url)
+            return "system"
+        except Exception:
+            return "error"
+
+    import threading
+
+    thread = threading.Thread(target=_run, name="assist-webview", daemon=True)
+    open_assist_browser._thread = thread  # type: ignore[attr-defined]
+    thread.start()
+    return "webview"
+
+
+def close_assist_browser() -> None:
+    window = getattr(open_assist_browser, "_window", None)
+    if window is None:
+        return
+    try:
+        window.destroy()
+    except Exception:
+        pass
+    open_assist_browser._window = None  # type: ignore[attr-defined]
+
+
 def parse_confirmation(result: Any) -> str:
     """Normalize callback returns to done | skip | retry."""
     if result is True:
@@ -354,6 +466,8 @@ class AccountCreator:
         if prefer_system_browser is None:
             prefer_system_browser = not _chromedriver_on_path()
         self.prefer_system_browser = prefer_system_browser
+        # When True, signup URL is returned for the GUI assist browser (no auto webbrowser.open).
+        self.defer_browser_open = False
         self._driver = None
         self._selenium_disabled = False
         self.last_payload: str = ""
@@ -546,26 +660,32 @@ class AccountCreator:
         message: Optional[str] = None,
     ) -> Dict[str, Any]:
         data, payload, copied = self._prepare_payload(service, personal_data, account_name)
-        launched = open_ops_browser(signup_url, setup_if_needed=True)
-        if not launched.get("ok"):
-            try:
-                webbrowser.open(signup_url)
-                launched = {
-                    "ok": True,
-                    "detail": f"Ops Chrome unavailable ({launched.get('detail')}); used default browser.",
-                }
-            except Exception as e:
-                return {
-                    "service": service,
-                    "status": "error",
-                    "error": str(e),
-                    "url": signup_url,
-                    "account_name": account_name,
-                    "personal_data": data,
-                    "payload": payload,
-                    "filled_fields": [],
-                    "clipboard_prepared": copied,
-                }
+        opened = False
+        launched: Dict[str, Any] = {"ok": True, "detail": "Deferred to assist browser."}
+        if not self.defer_browser_open:
+            launched = open_ops_browser(signup_url, setup_if_needed=True)
+            if launched.get("ok"):
+                opened = True
+            else:
+                try:
+                    webbrowser.open(signup_url)
+                    launched = {
+                        "ok": True,
+                        "detail": f"Ops Chrome unavailable ({launched.get('detail')}); used default browser.",
+                    }
+                    opened = True
+                except Exception as e:
+                    return {
+                        "service": service,
+                        "status": "error",
+                        "error": str(e),
+                        "url": signup_url,
+                        "account_name": account_name,
+                        "personal_data": data,
+                        "payload": payload,
+                        "filled_fields": [],
+                        "clipboard_prepared": copied,
+                    }
         return {
             "service": service,
             "status": status,
@@ -577,11 +697,15 @@ class AccountCreator:
             "clipboard_prepared": copied,
             "assist_fields": list(ASSIST_FIELD_KEYS),
             "ops_chrome": launched,
+            "browser_opened": opened,
             "message": message
             or (
                 "Opened signup in the DOWNLOWd Ops Chrome profile. "
                 "Use Bitwarden Auto-fill on the TEMP item, or Paste from the companion. "
                 "Complete captcha and submit yourself."
+                if opened
+                else "Signup ready. Use the assist keymap (⌘1–⌘6) to fill fields "
+                "in the browser. Complete captcha and submit yourself."
             ),
         }
 

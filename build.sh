@@ -1,23 +1,42 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+# Prefer the project venv so pyinstaller resolves without a global install.
+if [[ -x "$ROOT/.venv/bin/pyinstaller" ]]; then
+  export PATH="$ROOT/.venv/bin:$PATH"
+fi
 
 APP_NAME="DOWNLOWD"
 VERSION=$(grep '^version' pyproject.toml | sed -e 's/version = //' -e 's/"//g')
 
 echo "--- Bundling ${APP_NAME}.app with PyInstaller ---"
 
-pyinstaller --name "$APP_NAME" \
-            --windowed \
-            --noconfirm \
-            --icon "assets/icon.icns" \
-            run.py
+PYI_ARGS=(--name "$APP_NAME" --windowed --noconfirm)
+if [[ -f "$ROOT/assets/icon.icns" ]]; then
+  PYI_ARGS+=(--icon "$ROOT/assets/icon.icns")
+else
+  echo "Note: assets/icon.icns missing - building without a custom icon."
+fi
+PYI_ARGS+=(run.py)
 
-echo "--- .app bundle created in dist/ ---"
+pyinstaller "${PYI_ARGS[@]}"
+
+echo "--- .app bundle created in dist/${APP_NAME}.app ---"
+
+if [[ ! -d "dist/${APP_NAME}.app" ]]; then
+  echo "Error: dist/${APP_NAME}.app was not created." >&2
+  exit 1
+fi
 
 echo "--- Creating ${APP_NAME}-${VERSION}.pkg installer ---"
 
-mkdir -p pkg-resources
+mkdir -p pkg-resources pkg-root
+rm -rf "pkg-root/${APP_NAME}.app"
+cp -R "dist/${APP_NAME}.app" "pkg-root/${APP_NAME}.app"
 
 cat > pkg-resources/postinstall << 'EOF'
 #!/bin/bash
@@ -32,10 +51,12 @@ exit 0
 EOF
 chmod +x pkg-resources/postinstall
 
-pkgbuild --root "dist/${APP_NAME}.app" \
-         --install-location "/Applications/${APP_NAME}.app" \
+pkgbuild --root "pkg-root" \
+         --install-location "/Applications" \
          --scripts "pkg-resources" \
          "dist/${APP_NAME}-${VERSION}.pkg"
 
 echo "--- Build Complete! ---"
-echo "Installer created at: dist/${APP_NAME}-${VERSION}.pkg"
+echo "App:       dist/${APP_NAME}.app"
+echo "Installer: dist/${APP_NAME}-${VERSION}.pkg"
+echo "Or open with: open \"dist/${APP_NAME}.app\""

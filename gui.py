@@ -10,6 +10,7 @@ Settings: disposal modes, provisioning toggles, collection config.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import shutil
 import subprocess
@@ -547,7 +548,7 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
 
     def _on_cancel(self):
         self.bw_service.clear_session()
-        self.audit.log_authentication(False, method="bitwarden_cancelled")
+        self.audit.log_authentication(False, method="pin_cancelled")
         try:
             self.grab_release()
         except tk.TclError:
@@ -834,6 +835,7 @@ class AppGUI:
             profile_store=self.profile_store,
             profile_sync=self.profile_sync,
         )
+        self.onboarding_logic.account_creator.prefer_system_browser = True
         self._pending_retention_prompts: queue.Queue = queue.Queue()
         self._setup_file_logging()
         self._auth_ok = False
@@ -875,7 +877,8 @@ class AppGUI:
         self.root.after(250, self._drain_retention_prompts)
         self.root.after(500, self._warn_if_filevault_off)
         if self.credential_store.get("sync_on_startup", "true") == "true":
-            self.root.after(750, self.dashboard._sync_profiles)
+            # Local refresh only on launch — full Bitwarden pull is the Sync button.
+            self.root.after(750, lambda: self.dashboard._sync_profiles(pull=False))
 
     def _shutdown(self):
         self.retention_manager.stop_scheduler()
@@ -1005,8 +1008,14 @@ class AppGUI:
         self.root.mainloop()
 
     def _setup_file_logging(self):
-        log_dir = Path.cwd() / "logs"
-        log_dir.mkdir(exist_ok=True)
+        from data_retention import LOGS_DIR
+
+        log_dir = LOGS_DIR
+        log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(log_dir, 0o700)
+        except OSError:
+            pass
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         log_file = log_dir / f"onboarding_{timestamp}.log"
         self.session_log_path = log_file
@@ -2058,7 +2067,7 @@ class Dashboard(ttk.Frame):
                 fg_color=C["row_a"] if index % 2 == 0 else C["row_b"],
                 corner_radius=R_CHIP,
             )
-            row.pack(fill=tk.X, padx=10, pady=3)
+            row.pack(fill=tk.X, padx=10, pady=2)
             ctk.CTkLabel(
                 row,
                 text=label,
@@ -2078,6 +2087,18 @@ class Dashboard(ttk.Frame):
                 text_color=C["text"],
                 font=F_DATA,
             ).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=10)
+            ctk.CTkButton(
+                row,
+                text="Copy",
+                command=lambda v=value, l=label: self._copy_profile_field(l, v),
+                width=52,
+                height=26,
+                corner_radius=R_CHIP,
+                fg_color=C["accent"],
+                hover_color=C["accent_hover"],
+                text_color=C["paper"],
+                font=F_CAPTION,
+            ).pack(side=tk.RIGHT, padx=(0, 10), pady=8)
             if sensitive:
                 ctk.CTkButton(
                     row,
@@ -2090,7 +2111,16 @@ class Dashboard(ttk.Frame):
                     hover_color=C["card_hi"],
                     text_color=C["text"],
                     font=F_CAPTION,
-                ).pack(side=tk.RIGHT, padx=10, pady=8)
+                ).pack(side=tk.RIGHT, padx=(0, 4), pady=8)
+
+    def _copy_profile_field(self, label: str, value: str) -> None:
+        if not value:
+            self.status.set(f"No value for {label}")
+            return
+        if copy_to_clipboard(value):
+            self.status.set(f"Copied {label}")
+        else:
+            self.status.set(f"Could not copy {label}")
 
     def _toggle_profile_reveal(self, key: Tuple[str, str]):
         if key in self._revealed_profile_values:
@@ -2099,13 +2129,13 @@ class Dashboard(ttk.Frame):
             self._revealed_profile_values.add(key)
         self._render_profile_viewer()
 
-    def _sync_profiles(self):
-        self.status.set("Syncing…")
+    def _sync_profiles(self, *, pull: bool = True):
+        self.status.set("Syncing…" if pull else "Refreshing…")
         self._clear_profile_secrets()
 
         def sync():
             try:
-                self.profile_sync.sync_profiles()
+                self.profile_sync.sync_profiles(pull=pull)
                 self.after(0, self._profile_sync_complete)
             except Exception as exc:
                 self.after(0, lambda error=exc: self._profile_sync_failed(error))
@@ -2530,14 +2560,13 @@ class Dashboard(ttk.Frame):
         if not value:
             self.status.set(f"No value for {ASSIST_FIELD_LABELS.get(field_key, field_key)}")
             return "break"
-        # Briefly yield so the browser can keep focus after the hotkey.
-        self.after(40, lambda v=value, k=field_key: self._do_assist_paste(v, k))
+        self.after(120, lambda v=value, k=field_key: self._do_assist_paste(v, k))
         return "break"
 
     def _do_assist_paste(self, value: str, field_key: str) -> None:
         ok = paste_field_value(value)
         label = ASSIST_FIELD_LABELS.get(field_key, field_key)
-        self.status.set(f"Pasted {label}" if ok else f"Copied {label} (paste manually)")
+        self.status.set(f"Pasted {label}" if ok else f"Copied {label} — click field & ⌘V")
 
     def _assist_copy_field(self, field_key: str) -> None:
         value = assist_field_value(self._assist_personal, field_key)

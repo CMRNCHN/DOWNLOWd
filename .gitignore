@@ -9,6 +9,7 @@ build/
 dist/
 *.egg-info/
 pkg-resources/
+pkg-root/
 *.spec
 
 # Virtual environment

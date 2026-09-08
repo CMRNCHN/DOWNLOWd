@@ -22,10 +22,14 @@ def strip_rtf_to_text(raw: str) -> str:
     Best-effort RTF → plain text for TextEdit-style HQ exports.
 
     Unescapes \\_ \\{ \\} \\\\, drops control words/groups noise, keeps pipe rows.
+    Backslash-newline is a paragraph break (RTF spec / TextEdit Return), not a join.
     """
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
-    # RTF line continuation: trailing \<newline> joins soft-wrapped lines.
-    text = re.sub(r"\\\n", "", text)
+    # RTF spec: backslash + newline is a paragraph break (\par). TextEdit/Cocoa
+    # writes Return this way; joining those lines concatenates HQ pipe rows.
+    text = re.sub(r"\\\n", r"\\par ", text)
+    # Remaining bare newlines are optional RTF source wrapping, not document breaks.
+    text = text.replace("\n", "")
     text = text.replace("\\_", "_").replace("\\{", "{").replace("\\}", "}")
     text = text.replace("\\\\", "\x00")  # preserve literal backslash
     # Paragraph / soft line breaks become real newlines before controls are dropped.
@@ -408,14 +412,27 @@ class BitwardenConverter:
         return None
 
     def _find_dob_value(self, row_data: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
-        """Finds the DOB value and its corresponding key from the row data."""
+        """Finds a parseable DOB value. Prefers dob columns, then scans the row."""
+        candidates: List[Tuple[str, str]] = []
         for key in DOB_COLUMN_VARIANTS:
             if key in row_data and row_data[key].strip():
-                return row_data[key].strip(), key
+                candidates.append((row_data[key].strip(), key))
+        # HQ exports sometimes shift DOB into adjacent columns (e.g. ua).
+        for key, value in row_data.items():
+            text = (value or "").strip()
+            if not text or key in DOB_COLUMN_VARIANTS:
+                continue
+            candidates.append((text, key))
+        for text, key in candidates:
+            if self._parse_birth_year(text):
+                return text, key
         return None, None
 
     def _parse_birth_year(self, dob_string: str) -> Optional[str]:
         """Tries to parse a date string and return a four-digit year."""
+        raw = (dob_string or "").strip()
+        if not raw:
+            return None
         formats = [
             "%Y-%m-%d",
             "%m/%d/%Y",
@@ -423,14 +440,20 @@ class BitwardenConverter:
             "%d-%b-%Y",
             "%B %d, %Y",
             "%Y",
+            "%m/%d/%y",
+            "%m-%d-%y",
         ]
         for fmt in formats:
             try:
-                return str(datetime.strptime(dob_string, fmt).year)
+                year = datetime.strptime(raw, fmt).year
+                if 1800 <= year <= datetime.now().year:
+                    return str(year)
             except ValueError:
                 continue
-        if dob_string.isdigit() and len(dob_string) == 4:
-            return dob_string
+        if raw.isdigit() and len(raw) == 4:
+            year = int(raw)
+            if 1800 <= year <= datetime.now().year:
+                return raw
         return None
 
     def _create_base_item(self, item_type: int, name: str) -> Dict[str, Any]:

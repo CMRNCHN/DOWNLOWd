@@ -329,8 +329,9 @@ class ProfileSyncService:
         }
         return next((role for suffix, role in suffixes.items() if name.endswith(suffix)), None)
 
-    def sync_profiles(self) -> List[Dict[str, Any]]:
-        self.bitwarden.sync()
+    def sync_profiles(self, *, pull: bool = True) -> List[Dict[str, Any]]:
+        if pull:
+            self.bitwarden.sync()
         items = self.bitwarden.list_items()
         profiles = {
             profile["employee_id"]: profile
