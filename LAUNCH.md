@@ -1,24 +1,20 @@
-# Launch — DOWNLOWd
+# Launch — Provision
 
-Double-click in Finder:
-
-`~/Developer/projects/Launchers/DOWNLOWd.command`
-
-Or from this folder:
+From this folder:
 
 ```bash
-cd /Users/cameroncohen/Developer/projects/DOWNLOWd
+cd /Users/cameroncohen/Developer/projects/Provision
 python3 run.py
 ```
 
 | | |
 |---|---|
-| Launcher | `DOWNLOWd.command` |
+| Launcher | `~/Developer/projects/Launchers/DOWNLOWd.command` |
 | Kind | runnable |
-| Managed by | `~/Developer/projects/Launchers/scripts/sync-projects` |
 
-Re-run sync after changing how this project starts:
-
-```bash
-~/Developer/projects/Launchers/scripts/sync-projects
-```
+Note: the Finder launcher above still points at the pre-rename path
+(`.../projects/DOWNLOWd`, now `.../projects/Provision`) and its own
+`sync-projects` regeneration script no longer exists at the path its
+header comment names. It needs to be regenerated or hand-fixed in the
+`Launchers` project directly — that project is outside this repo, so
+it wasn't touched as part of this rename.

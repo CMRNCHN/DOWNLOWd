@@ -822,7 +822,7 @@ class AssistHelpersTests(unittest.TestCase):
             "postal": "20002",
         }
         outlook = build_temp_autofill_payload("Outlook", personal, "cameroncohen1994")
-        self.assertTrue(outlook["payload"]["name"].startswith("DOWNLOWD · TEMP · Outlook"))
+        self.assertTrue(outlook["payload"]["name"].startswith("PROVISION · TEMP · Outlook"))
         self.assertEqual(outlook["payload"]["login"]["username"], "cameroncohen1994")
         field_names = {f["name"] for f in outlook["payload"]["fields"]}
         self.assertIn("MemberName", field_names)
@@ -857,7 +857,7 @@ class AssistHelpersTests(unittest.TestCase):
             root = profile.ensure(install_extensions=False)
             self.assertTrue(root.exists())
             prefs = json.loads((profile.default_dir / "Preferences").read_text(encoding="utf-8"))
-            self.assertEqual(prefs["profile"]["name"], "DOWNLOWd Ops")
+            self.assertEqual(prefs["profile"]["name"], "Provision Ops")
             self.assertFalse(prefs["credentials_enable_service"])
             self.assertFalse(prefs["autofill"]["profile_enabled"])
             self.assertEqual(prefs["webrtc"]["ip_handling_policy"], "disable_non_proxied_udp")

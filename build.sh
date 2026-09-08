@@ -10,7 +10,7 @@ if [[ -x "$ROOT/.venv/bin/pyinstaller" ]]; then
   export PATH="$ROOT/.venv/bin:$PATH"
 fi
 
-APP_NAME="DOWNLOWD"
+APP_NAME="PROVISION"
 VERSION=$(grep '^version' pyproject.toml | sed -e 's/version = //' -e 's/"//g')
 
 echo "--- Bundling ${APP_NAME}.app with PyInstaller ---"

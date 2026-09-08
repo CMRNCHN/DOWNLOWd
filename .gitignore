@@ -27,7 +27,7 @@ venv/
 # Runtime data / logs
 logs/
 *.log
-.downlowd_temp/
-.downlowd_transactions.db
-.downlowd_retention.json
-.downlowd_audit.log
+.provision_temp/
+.provision_transactions.db
+.provision_retention.json
+.provision_audit.log

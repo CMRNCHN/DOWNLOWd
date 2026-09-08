@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 CREDENTIALS_FILE = Path.home() / ".onboarding_credentials.json"
-SECURE_CREDENTIALS_FILE = Path.home() / ".downlowd" / "credentials.json"
-KEYRING_SERVICE = "DOWNLOWD"
+SECURE_CREDENTIALS_FILE = Path.home() / ".provision" / "credentials.json"
+KEYRING_SERVICE = "PROVISION"
 
 APP_PASSWORD_HASH_KEY = "app_password_hash"
 APP_PASSWORD_SALT_KEY = "app_password_salt"
@@ -45,7 +45,7 @@ def _clean_cli_text(text: str) -> str:
 
 
 class CredentialStore:
-    """Settings store: chmod-600 JSON under ~/.downlowd (no Keychain prompts)."""
+    """Settings store: chmod-600 JSON under ~/.provision (no Keychain prompts)."""
 
     def __init__(self, path: Optional[Path] = None):
         self.path = Path(path) if path else SECURE_CREDENTIALS_FILE
@@ -548,7 +548,7 @@ class BitwardenService:
         collection: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Import Bitwarden JSON into personal vault or an organization collection."""
-        secure_temp_dir = Path.home() / ".downlowd_temp"
+        secure_temp_dir = Path.home() / ".provision_temp"
         secure_temp_dir.mkdir(exist_ok=True, mode=0o700)
         collection_id = str(collection.get("id")) if collection else "personal"
         organization_id = (

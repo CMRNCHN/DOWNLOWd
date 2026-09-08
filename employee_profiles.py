@@ -10,10 +10,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-PROFILE_DATA_FILE = Path.home() / ".downlowd_profiles.json"
+PROFILE_DATA_FILE = Path.home() / ".provision_profiles.json"
 SCHEMA_VERSION = 2
-EMPLOYEE_ID_FIELD = "DOWNLOWD Employee ID"
-RECORD_ROLE_FIELD = "DOWNLOWD Record Role"
+EMPLOYEE_ID_FIELD = "PROVISION Employee ID"
+RECORD_ROLE_FIELD = "PROVISION Record Role"
+# Pre-rename field names (app was DOWNLOWd) — still read so existing vault items reconcile.
+_LEGACY_EMPLOYEE_ID_FIELD = "DOWNLOWD Employee ID"
+_LEGACY_RECORD_ROLE_FIELD = "DOWNLOWD Record Role"
 RECORD_ROLES = (
     "identity",
     "email_login",
@@ -339,8 +342,12 @@ class ProfileSyncService:
         }
         legacy_matches: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
         for item in items:
-            employee_id = self._custom_field(item, EMPLOYEE_ID_FIELD)
-            role = self._custom_field(item, RECORD_ROLE_FIELD)
+            employee_id = self._custom_field(item, EMPLOYEE_ID_FIELD) or self._custom_field(
+                item, _LEGACY_EMPLOYEE_ID_FIELD
+            )
+            role = self._custom_field(item, RECORD_ROLE_FIELD) or self._custom_field(
+                item, _LEGACY_RECORD_ROLE_FIELD
+            )
             if employee_id in profiles and role in RECORD_ROLES:
                 self.store.bind_vault_ref(employee_id, role, item)
                 continue

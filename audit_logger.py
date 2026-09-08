@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-AUDIT_LOG_FILE = Path.home() / ".downlowd_audit.log"
+AUDIT_LOG_FILE = Path.home() / ".provision_audit.log"
 
 
 class AuditLogger:

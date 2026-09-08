@@ -1,4 +1,4 @@
-# DOWNLOWd Security Features
+# Provision Security Features
 
 ## Overview
 
@@ -8,7 +8,7 @@ Security controls for application and Bitwarden authentication, local settings, 
 
 ### 1. macOS Keychain Integration
 
-- Credentials stored via `keyring` under service `DOWNLOWD`
+- Credentials stored via `keyring` under service `PROVISION`
 - On first run after upgrade, plaintext `~/.onboarding_credentials.json` is migrated into Keychain
 - After a successful migration the source file is **securely overwritten and deleted** (no `.json.backup` left behind)
 - If migration fails mid-way, the original file is left intact and an error is logged
@@ -16,15 +16,15 @@ Security controls for application and Bitwarden authentication, local settings, 
 ### 2. Bitwarden Authentication
 
 - The main window opens only after a successful `bw login` or `bw unlock` with the Bitwarden master password
-- The Bitwarden master password is passed to the CLI through a process environment variable and is not persisted by DOWNLOWd
+- The Bitwarden master password is passed to the CLI through a process environment variable and is not persisted by Provision
 - The returned `BW_SESSION` value is held in process memory and passed only to child `bw` commands
 - Failed login/unlock and cancelled 2FA clear the in-memory session
 - Authentication success/failure/cancellation events are written to the audit log
-- There is no separate DOWNLOWd app password gate
+- There is no separate Provision app password gate
 
 ### 3. Transaction Logging
 
-- Local SQLite at `~/.downlowd_transactions.db`
+- Local SQLite at `~/.provision_transactions.db`
 - File mode is enforced as **`0o600`** before every SQLite connection
 - **Not encrypted at rest** (SQLCipher is out of scope for this release; tracked as future work)
 - Add / list / export CSV / delete by database id (Treeview `iid`)
@@ -45,7 +45,7 @@ Independent milestone checks (overdue day-15/20 are not blocked by unfinished da
 
 ### 5. Security Audit Logging
 
-File: `~/.downlowd_audit.log`
+File: `~/.provision_audit.log`
 
 Logged events include: authentication, imports, deletions, transaction add/delete, retention actions, collection name config changes.
 
@@ -58,12 +58,12 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 
 ### 7. Secure Temporary Files
 
-- Import temp files under `~/.downlowd_temp/` (`0o700` dir, `0o600` files)
+- Import temp files under `~/.provision_temp/` (`0o700` dir, `0o600` files)
 - Multi-pass overwrite before unlink
 
 ### 8. Bitwarden-Synced Employee Profiles
 
-- Versioned, owner-only metadata at `~/.downlowd_profiles.json`, keyed by immutable employee UUID
+- Versioned, owner-only metadata at `~/.provision_profiles.json`, keyed by immutable employee UUID
 - Local records contain display metadata and vault item references only—never passwords, card numbers, CVVs, SSNs, or DOB
 - New imports include hidden employee-ID and record-role fields, then reconcile actual Bitwarden item IDs after `bw sync`
 - Legacy records require one unique exact employee/role match; ambiguous matches remain unresolved
@@ -94,8 +94,8 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 ## Best practices
 
 1. Use separate strong app and Bitwarden passwords; enable Bitwarden 2FA
-2. Review `~/.downlowd_audit.log` periodically
-3. Treat `~/.downlowd_transactions.db` as sensitive — **FileVault required for production**; the app warns at launch if FileVault is Off
+2. Review `~/.provision_audit.log` periodically
+3. Treat `~/.provision_transactions.db` as sensitive — **FileVault required for production**; the app warns at launch if FileVault is Off
 4. Respond to retention prompts promptly
 
 ## Future work

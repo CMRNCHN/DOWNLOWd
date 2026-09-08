@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-DB_PATH = Path.home() / ".downlowd_transactions.db"
+DB_PATH = Path.home() / ".provision_transactions.db"
 
 
 class TransactionDatabase:

@@ -17,7 +17,7 @@ from pathlib import Path
 def _bootstrap_runtime() -> Path:
     """Ensure Homebrew CLI tools are visible when launched as a .app, and log crashes."""
     home = Path.home()
-    log_path = home / ".downlowd_launch.log"
+    log_path = home / ".provision_launch.log"
     extras = [
         "/opt/homebrew/bin",
         "/usr/local/bin",

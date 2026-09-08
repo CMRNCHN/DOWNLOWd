@@ -1,15 +1,15 @@
 #!/bin/bash
 
 #
-# DOWNLOWD - Automated Setup Script for macOS
+# PROVISION - Automated Setup Script for macOS
 #
 # This script installs all necessary system and Python dependencies
-# to run the DOWNLOWD application.
+# to run the PROVISION application.
 #
 
 set -e # Exit immediately if a command exits with a non-zero status.
 
-echo "--- Starting DOWNLOWD Setup ---"
+echo "--- Starting PROVISION Setup ---"
 
 # 1. Check for and install Homebrew
 if ! command -v brew &> /dev/null; then

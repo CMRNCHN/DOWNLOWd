@@ -1,4 +1,4 @@
-# DOWNLOWD - Employee Onboarding Appliance
+# Provision - Employee Onboarding Appliance
 
 An automated desktop tool for streamlining new employee onboarding tasks. The application monitors the Downloads folder for specific employee data files, converts them for Bitwarden import, optionally opens partner signup pages, and includes local transaction logging for company card expenses.
 
@@ -49,8 +49,8 @@ chmod +x setup.sh
 3. Clone and install:
 
 ```bash
-git clone https://github.com/CMRNCHN/DOWNLOWd.git
-cd DOWNLOWd
+git clone https://github.com/CMRNCHN/DOWNLOWd.git provision
+cd provision
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -69,8 +69,8 @@ App-password and Bitwarden authentication happen inside the app. The Bitwarden C
 
 1. Bitwarden CLI on PATH (`bw --version`) and vault unlockable
 2. Shared employee passphrase ready (8+ chars)
-3. For ⌘1–⌘6 paste into signup fields: grant **Accessibility** to Terminal/Python (or the DOWNLOWd app) in System Settings → Privacy & Security
-4. Optional Selenium prefill: install `chromedriver` on PATH (or set `DOWNLOWD_CHROMEDRIVER`). Without it, signup uses system-browser handoff + the assist panel (recommended default when sites bot-block automation)
+3. For ⌘1–⌘6 paste into signup fields: grant **Accessibility** to Terminal/Python (or the Provision app) in System Settings → Privacy & Security
+4. Optional Selenium prefill: install `chromedriver` on PATH (or set `PROVISION_CHROMEDRIVER`). Without it, signup uses system-browser handoff + the assist panel (recommended default when sites bot-block automation)
 
 ### Build installer
 
@@ -83,7 +83,7 @@ chmod +x build.sh
 ## Honest limitations
 
 - Transaction DB is **plaintext SQLite** with `chmod 600` — enable **FileVault** on macOS (the app warns at launch if FileVault is Off). Full SQLCipher encryption is future work.
-- Partner signup is **assisted**, not fully automated: DOWNLOWd opens the page, prefills what it can (or hands off to the system browser on bot blocks), and shows an in-app Account assist panel with per-field Copy/Paste plus ⌘1–⌘6 hotkeys. CAPTCHA and final submit always stay with you.
+- Partner signup is **assisted**, not fully automated: Provision opens the page, prefills what it can (or hands off to the system browser on bot blocks), and shows an in-app Account assist panel with per-field Copy/Paste plus ⌘1–⌘6 hotkeys. CAPTCHA and final submit always stay with you.
 - Outlook must be marked Done before Hyatt/Marriott for that employee; Skip leaves accounts pending; Retry recreates the signup attempt.
 - Structured clipboard payloads (`key: value` lines) are Keysmith-ready if you want an optional overlay macro — Keysmith is not required, and there is no KeyCue integration.
 - Day-20 log retention shreds **tracked** log paths and per-employee `logs/employees/<name>/` dirs; shared session logs are line-scrubbed (not whole-file deleted).

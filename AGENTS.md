@@ -2,7 +2,7 @@
 
 ## Cursor Cloud specific instructions
 
-DOWNLOWd is a **single desktop GUI application** (Python + Tkinter/`customtkinter`) that automates
+Provision is a **single desktop GUI application** (Python + Tkinter/`customtkinter`) that automates
 employee onboarding: it reads `HQ-*.txt/.rtf` files from `~/Downloads`, converts them to Bitwarden
 import JSON, imports them into a Bitwarden vault, and (optionally) assists with partner signups. It is
 written for macOS but has cross-platform fallbacks and runs on this Linux VM under the X display `:1`.

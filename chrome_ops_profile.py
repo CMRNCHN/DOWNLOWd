@@ -1,4 +1,4 @@
-"""Isolated Chrome profile for DOWNLOWd partner-account creation.
+"""Isolated Chrome profile for Provision partner-account creation.
 
 Keeps employee signup browsing out of the operator's personal Chrome profile,
 disables Chrome password/autofill (Bitwarden owns secrets), downloads privacy /
@@ -22,10 +22,10 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-PROFILE_ROOT = Path.home() / ".downlowd" / "chrome-ops-profile"
-EXTENSIONS_ROOT = Path.home() / ".downlowd" / "chrome-ops-extensions"
-BROWSERS_ROOT = Path.home() / ".downlowd" / "browsers"
-SETUP_PAGE_NAME = "downlowd-ops-setup.html"
+PROFILE_ROOT = Path.home() / ".provision" / "chrome-ops-profile"
+EXTENSIONS_ROOT = Path.home() / ".provision" / "chrome-ops-extensions"
+BROWSERS_ROOT = Path.home() / ".provision" / "browsers"
+SETUP_PAGE_NAME = "provision-ops-setup.html"
 
 # Chrome Web Store IDs — account creation + identity / fingerprint protection.
 # auto_install=False keeps a store link for MV2-only / unavailable packages.
@@ -33,7 +33,7 @@ RECOMMENDED_EXTENSIONS: Tuple[Dict[str, Any], ...] = (
     {
         "id": "nngceckbapebfimnlniiiahkandclblb",
         "name": "Bitwarden",
-        "why": "Autofill the temporary DOWNLOWd signup profiles (and nothing else).",
+        "why": "Autofill the temporary Provision signup profiles (and nothing else).",
         "category": "account_creation",
         "auto_install": True,
     },
@@ -108,11 +108,11 @@ _CHROME_UA = (
 
 
 def find_chrome_binary() -> Optional[str]:
-    env = os.environ.get("DOWNLOWD_CHROME_BIN") or os.environ.get("CHROME_BIN")
+    env = os.environ.get("PROVISION_CHROME_BIN") or os.environ.get("CHROME_BIN")
     if env and Path(env).exists():
         return env
 
-    # Chrome for Testing is optional and only used when DOWNLOWD_CHROME_BIN points at it.
+    # Chrome for Testing is optional and only used when PROVISION_CHROME_BIN points at it.
     # Branded Chrome still loads extensions already registered into this profile.
 
     candidates = []
@@ -154,7 +154,7 @@ def find_chrome_binary() -> Optional[str]:
 
 
 def find_chromedriver() -> Optional[str]:
-    env = os.environ.get("DOWNLOWD_CHROMEDRIVER") or os.environ.get("CHROMEDRIVER")
+    env = os.environ.get("PROVISION_CHROMEDRIVER") or os.environ.get("CHROMEDRIVER")
     if env and Path(env).exists():
         return env
     marker = BROWSERS_ROOT / "chromedriver-bin"
@@ -344,7 +344,7 @@ class ChromeOpsProfile:
                 prefs = {}
 
         profile = prefs.setdefault("profile", {})
-        profile["name"] = "DOWNLOWd Ops"
+        profile["name"] = "Provision Ops"
         profile["password_manager_enabled"] = False
         profile["exit_type"] = "Normal"
 
@@ -679,7 +679,7 @@ class ChromeOpsProfile:
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>DOWNLOWd Ops Chrome — extension desk</title>
+  <title>Provision Ops Chrome — extension desk</title>
   <style>
     :root {{
       --bg: #e4e8e2; --card: #f7f8f5; --ink: #1a1f1a;
@@ -727,10 +727,10 @@ class ChromeOpsProfile:
 </head>
 <body>
   <main>
-    <h1>DOWNLOWd Ops Chrome</h1>
+    <h1>Provision Ops Chrome</h1>
     <p class="lede">
       This browser profile is only for partner account creation.
-      Keep it signed out of your personal Google account. DOWNLOWd downloads
+      Keep it signed out of your personal Google account. Provision downloads
       uBlock Origin Lite, fingerprint defenders, and Bitwarden, then registers
       them into this profile (Chrome 137+ no longer loads unpacked extensions
       from the command line on branded builds).
@@ -746,7 +746,7 @@ class ChromeOpsProfile:
         <li>uBlock Origin Lite + Decentraleyes cut tracker noise on signup pages.</li>
         <li>Canvas / WebRTC defenders reduce sticky browser fingerprints.</li>
         <li>Close Chrome before Settings → Install / refresh extensions.</li>
-        <li>After each employee, close extra tabs; DOWNLOWd can also reset site data.</li>
+        <li>After each employee, close extra tabs; Provision can also reset site data.</li>
       </ul>
     </div>
   </main>
@@ -756,7 +756,7 @@ class ChromeOpsProfile:
         self.setup_page.write_text(html, encoding="utf-8")
 
     def _write_first_run_sentinel(self) -> None:
-        marker = self.root / ".downlowd_ops_ready"
+        marker = self.root / ".provision_ops_ready"
         if not marker.exists():
             marker.write_text("ready\n", encoding="utf-8")
 

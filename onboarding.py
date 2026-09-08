@@ -24,7 +24,7 @@ from secure_delete import (
     secure_delete_file,
 )
 
-TEMP_DIR = Path.home() / ".downlowd_temp"
+TEMP_DIR = Path.home() / ".provision_temp"
 
 
 @dataclass

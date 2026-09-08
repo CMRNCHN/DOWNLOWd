@@ -473,8 +473,8 @@ class BitwardenConverter:
     @staticmethod
     def _correlation_fields(employee_id: str, role: str) -> List[Dict[str, Any]]:
         return [
-            {"name": "DOWNLOWD Employee ID", "value": employee_id, "type": 1},
-            {"name": "DOWNLOWD Record Role", "value": role, "type": 1},
+            {"name": "PROVISION Employee ID", "value": employee_id, "type": 1},
+            {"name": "PROVISION Record Role", "value": role, "type": 1},
         ]
 
     def _generate_login_item(

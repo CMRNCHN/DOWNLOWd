@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DOWNLOWd — secure employee onboarding appliance GUI.
+Provision — secure employee onboarding appliance GUI.
 
 Startup: PIN unlock (letters and/or numbers) decrypts Bitwarden master password.
 Dashboard: intake → Bitwarden → partner accounts → lockdown.
@@ -454,7 +454,7 @@ def _auth_brand(parent: ctk.CTkFrame, title: str, subtitle: str) -> None:
     BrandGlyph(mark, size=48, bg=C["surface"], ink=C["accent"]).pack(expand=True)
     ctk.CTkLabel(
         header,
-        text="DOWNLOWd",
+        text="Provision",
         font=F_BRAND,
         text_color=C["ink"],
     ).pack(pady=(16, 4))
@@ -541,7 +541,7 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         self._form: Optional[ctk.CTkFrame] = None
         self._card: Optional[ctk.CTkFrame] = None
 
-        self.title("DOWNLOWd")
+        self.title("Provision")
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
         self._build_ui()
         _present_auth_dialog(self, parent)
@@ -611,7 +611,7 @@ class BitwardenLoginDialog(ctk.CTkToplevel):
         _auth_brand(
             self._card,
             "Create your PIN",
-            "4–8 letters and/or numbers. Bitwarden unlocks once; the PIN opens DOWNLOWd next time.",
+            "4–8 letters and/or numbers. Bitwarden unlocks once; the PIN opens Provision next time.",
         )
         form = ctk.CTkFrame(self._card, fg_color="transparent", corner_radius=0)
         form.pack(fill=tk.BOTH, expand=True, padx=28, pady=(0, 28))
@@ -802,7 +802,7 @@ class AppGUI:
         self.root: Any = TkinterDnD.Tk() if _DND_AVAILABLE else tk.Tk()
         # Keep root mapped but invisible during auth so CTk dialogs can appear on macOS.
         # withdraw() hides child unlock windows; off-screen geometry shows a blank window.
-        self.root.title("DOWNLOWd")
+        self.root.title("Provision")
         self.root.geometry("1x1+0+0")
         self.root.minsize(1, 1)
         try:
@@ -988,7 +988,7 @@ class AppGUI:
         )
 
     def build_main_screen(self):
-        self.root.title("DOWNLOWd")
+        self.root.title("Provision")
         self.root.minsize(420, 480)
         self.root.geometry("480x560+120+60")
         for child in self.root.winfo_children():
@@ -1117,7 +1117,7 @@ class Dashboard(ttk.Frame):
         title_col.pack(side=tk.LEFT, padx=(10, 0))
         ctk.CTkLabel(
             title_col,
-            text="DOWNLOWd",
+            text="Provision",
             font=F_BRAND,
             text_color=C["ink"],
         ).pack(anchor="w")
@@ -2695,8 +2695,8 @@ class Dashboard(ttk.Frame):
         )
         employee_name = employee.get("full_name") or "Employee"
 
-        # Keep DOWNLOWd visible; float a compact field companion beside the browser.
-        arrange = arrange_windows_for_assist(app_title="DOWNLOWd")
+        # Keep Provision visible; float a compact field companion beside the browser.
+        arrange = arrange_windows_for_assist(app_title="Provision")
         if arrange.get("detail"):
             logging.info("Assist layout: %s", arrange["detail"])
 
@@ -3030,7 +3030,7 @@ class Dashboard(ttk.Frame):
                     self.app.root.after(
                         0,
                         lambda: self.status.set(
-                            "Vault locked — quit and reopen DOWNLOWd to sign in"
+                            "Vault locked — quit and reopen Provision to sign in"
                         ),
                     )
                     return

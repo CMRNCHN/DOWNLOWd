@@ -209,11 +209,11 @@ def paste_field_value(value: str) -> bool:
 
 def arrange_windows_for_assist(
     *,
-    app_title: str = "DOWNLOWd",
+    app_title: str = "Provision",
     browser_apps: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Best-effort side-by-side layout: DOWNLOWd left, browser right (macOS).
+    Best-effort side-by-side layout: Provision left, browser right (macOS).
 
     Embedding a live browser inside Tk is not supported; this keeps both
     visible so the operator can watch signup while using the field companion.
@@ -303,7 +303,7 @@ return browserName
         return result
 
 
-def focus_assist_browser(title_hint: str = "DOWNLOWd Assist") -> bool:
+def focus_assist_browser(title_hint: str = "Provision Assist") -> bool:
     """Bring the assist browser window to the front (macOS)."""
     if sys.platform != "darwin":
         return False
@@ -340,7 +340,7 @@ def focus_assist_browser(title_hint: str = "DOWNLOWd Assist") -> bool:
         return False
 
 
-def open_assist_browser(url: str, *, title: str = "DOWNLOWd Assist") -> str:
+def open_assist_browser(url: str, *, title: str = "Provision Assist") -> str:
     """
     Open signup URL in an in-app WebKit window when possible.
 
@@ -430,13 +430,13 @@ def parse_confirmation(result: Any) -> str:
 
 
 # Default partner signup endpoints. Each can be overridden with an env var
-# (e.g. DOWNLOWD_OUTLOOK_URL) to target a staging/self-hosted signup page or to
+# (e.g. PROVISION_OUTLOOK_URL) to target a staging/self-hosted signup page or to
 # run the flow end-to-end in tests without hitting the live, bot-walled sites.
 SIGNUP_URLS: Dict[str, Tuple[str, str]] = {
-    "Outlook": ("DOWNLOWD_OUTLOOK_URL", "https://signup.live.com/"),
-    "Hyatt": ("DOWNLOWD_HYATT_URL", "https://www.hyatt.com/en-US/member/enroll"),
+    "Outlook": ("PROVISION_OUTLOOK_URL", "https://signup.live.com/"),
+    "Hyatt": ("PROVISION_HYATT_URL", "https://www.hyatt.com/en-US/member/enroll"),
     "Marriott": (
-        "DOWNLOWD_MARRIOTT_URL",
+        "PROVISION_MARRIOTT_URL",
         "https://www.marriott.com/loyalty/createAccount/createAccountPage1.mi",
     ),
 }
@@ -450,8 +450,8 @@ def signup_url(service: str) -> str:
 
 def _chromedriver_on_path() -> bool:
     """True when a usable chromedriver binary is already available."""
-    if os.environ.get("DOWNLOWD_CHROMEDRIVER"):
-        return os.path.exists(os.environ["DOWNLOWD_CHROMEDRIVER"])
+    if os.environ.get("PROVISION_CHROMEDRIVER"):
+        return os.path.exists(os.environ["PROVISION_CHROMEDRIVER"])
     from shutil import which
 
     return which("chromedriver") is not None
@@ -514,7 +514,7 @@ class AccountCreator:
 
         options = self._build_chrome_options()
         service = None
-        driver_path = os.environ.get("DOWNLOWD_CHROMEDRIVER") or ""
+        driver_path = os.environ.get("PROVISION_CHROMEDRIVER") or ""
         if driver_path and os.path.exists(driver_path):
             from selenium.webdriver.chrome.service import Service
 
@@ -700,7 +700,7 @@ class AccountCreator:
             "browser_opened": opened,
             "message": message
             or (
-                "Opened signup in the DOWNLOWd Ops Chrome profile. "
+                "Opened signup in the Provision Ops Chrome profile. "
                 "Use Bitwarden Auto-fill on the TEMP item, or Paste from the companion. "
                 "Complete captcha and submit yourself."
                 if opened
@@ -1060,9 +1060,9 @@ def build_temp_autofill_payload(
     uris = [{"uri": url, "match": spec["match"]} for url in spec["urls"]]
     payload = {
         "type": 1,
-        "name": f"DOWNLOWD · TEMP · {service} · {account_name}",
+        "name": f"PROVISION · TEMP · {service} · {account_name}",
         "notes": (
-            "Temporary signup autofill profile created by DOWNLOWd. "
+            "Temporary signup autofill profile created by Provision. "
             "Safe to delete after the account exists."
         ),
         "favorite": True,
@@ -1108,7 +1108,7 @@ class TemporaryAutofillManager:
             "autofill_message": (
                 f"Temporary Bitwarden autofill profile ready ({len(linked)} linked fields). "
                 "In the browser extension: open the signup page → Auto-fill "
-                f"“DOWNLOWD · TEMP · {service}”."
+                f"“PROVISION · TEMP · {service}”."
             ),
         }
 
