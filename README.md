@@ -49,7 +49,7 @@ chmod +x setup.sh
 3. Clone and install:
 
 ```bash
-git clone https://github.com/CMRNCHN/DOWNLOWd.git provision
+git clone https://github.com/CMRNCHN/provision.git
 cd provision
 python3 -m venv .venv
 source .venv/bin/activate
