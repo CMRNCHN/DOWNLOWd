@@ -3,29 +3,29 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "onboarding-appliance"
-version = "0.1.0"
+name = "provision"
+version = "0.3.0"
 description = "An automated tool for employee onboarding tasks, including account creation and data import."
 authors = [
   { name="Cameron Cohen", email="cameron@example.com" },
 ]
 license = "MIT"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 dependencies = [
     "cryptography>=42.0.0",
     "requests>=2.31.0",
     "selenium>=4.15.0",
     "msal>=1.20.0",
-    "tkinterdnd2-universal>=0.5.1",
+    "tkinterdnd2-universal>=0.5.1; sys_platform == 'darwin'",
     "customtkinter>=6.0.0",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/cameron-cohen/onboarding-appliance"
-"Bug Tracker" = "https://github.com/cameron-cohen/onboarding-appliance/issues"
+"Homepage" = "https://github.com/CMRNCHN/provision"
+"Bug Tracker" = "https://github.com/CMRNCHN/provision/issues"
 
 [project.scripts]
-onboard-app = "run:main"
+provision = "run:main"
 
 [project.optional-dependencies]
 dev = ["pyinstaller"]

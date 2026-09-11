@@ -106,5 +106,6 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 
 ## Version
 
+- **0.3.0** — Renamed from DOWNLOWd to Provision; PIN unlock hardened with failed-attempt lockout and a stronger, versioned KDF
 - **0.2.2** — Selenium partner prefill, tracked day-20 logs, FileVault launch warning, Python 3.14 Tk DnD fallback
-- Compatibility: macOS 10.15+, Python 3.8+
+- Compatibility: macOS 10.15+, Python 3.11+
