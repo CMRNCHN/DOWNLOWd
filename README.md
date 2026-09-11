@@ -1,6 +1,6 @@
 # Provision - Employee Onboarding Appliance
 
-An automated desktop tool for streamlining new employee onboarding tasks. The application monitors the Downloads folder for specific employee data files, converts them for Bitwarden import, optionally opens partner signup pages, and includes local transaction logging for company card expenses.
+An automated desktop tool for streamlining new employee onboarding tasks. The application monitors `~/Downloads/Secure Downloads` — a locked-down subfolder created and hardened by the app itself (owner-only permissions, excluded from Spotlight and Time Machine) — for specific employee data files, converts them for Bitwarden import, optionally opens partner signup pages, and includes local transaction logging for company card expenses.
 
 ## Security Features
 

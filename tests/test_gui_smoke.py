@@ -52,6 +52,10 @@ def _patch_all_app_data_paths(tmp_dir: Path) -> contextlib.ExitStack:
         mock.patch.object(data_retention, "RETENTION_DATA_FILE", tmp_dir / "retention.json")
     )
     stack.enter_context(mock.patch.object(data_retention, "LOGS_DIR", tmp_dir / "logs"))
+    stack.enter_context(
+        mock.patch.object(gui, "DOWNLOADS", tmp_dir / "Downloads" / "Secure Downloads")
+    )
+    stack.enter_context(mock.patch("subprocess.run"))
     _patch_audit_singleton(tmp_dir, stack)
     return stack
 

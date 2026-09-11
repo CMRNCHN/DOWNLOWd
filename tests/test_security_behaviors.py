@@ -3,6 +3,7 @@ import os
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,7 @@ from integrations import (
     PinAuth,
     SessionManager,
 )
+import gui
 from gui import Dashboard
 from onboarding import BitwardenConfig, Onboarding, OnboardingConfig
 from transaction_db import TransactionDatabase
@@ -785,6 +787,95 @@ class HqTemplateTests(unittest.TestCase):
         errors = validate_manual_values({"firstname": "Ada"})
         self.assertTrue(any("Last name" in error for error in errors))
         self.assertTrue(any("Card number" in error for error in errors))
+
+
+class SecureWatchDirTests(unittest.TestCase):
+    """The intake watch folder moved from ~/Downloads to a hardened
+    ~/Downloads/Secure Downloads subfolder. These tests exercise the
+    hardening function and the detect-then-convert path against a dummy
+    HQ file, without touching the real filesystem location or any real
+    Bitwarden vault.
+    """
+
+    def test_creates_owner_only_dir_with_spotlight_sentinel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "Downloads" / "Secure Downloads"
+            with mock.patch("subprocess.run") as mock_run:
+                result = gui._ensure_secure_watch_dir(target)
+            self.assertEqual(result, target)
+            self.assertTrue(target.is_dir())
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+            self.assertTrue((target / ".metadata_never_index").exists())
+            if sys.platform == "darwin":
+                self.assertEqual(mock_run.call_args.args[0][:2], ["tmutil", "addexclusion"])
+            else:
+                mock_run.assert_not_called()
+
+    def test_replaces_a_symlink_instead_of_following_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            real_target = Path(directory) / "elsewhere"
+            real_target.mkdir()
+            link = Path(directory) / "Secure Downloads"
+            link.symlink_to(real_target)
+            with mock.patch("subprocess.run"):
+                gui._ensure_secure_watch_dir(link)
+            self.assertFalse(link.is_symlink())
+            self.assertTrue(link.is_dir())
+            self.assertEqual(stat.S_IMODE(link.stat().st_mode), 0o700)
+
+    def test_idempotent_on_repeated_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "Secure Downloads"
+            with mock.patch("subprocess.run"):
+                gui._ensure_secure_watch_dir(target)
+                gui._ensure_secure_watch_dir(target)  # must not raise
+            self.assertTrue(target.is_dir())
+
+    def test_dummy_hq_file_is_detected_and_converts_from_the_hardened_dir(self):
+        """Mirrors HqTemplateTests' dummy-employee fixture, but sourced from
+        a freshly hardened watch dir, matching Dashboard._queued_employee_files'
+        glob (HQ-*.txt / HQ-*.rtf) and the real conversion step. No Bitwarden
+        CLI call is made — BitwardenConverter only builds the JSON payload.
+        """
+        from hq_template import write_hq_file
+
+        with tempfile.TemporaryDirectory() as directory:
+            watch_dir = Path(directory) / "Downloads" / "Secure Downloads"
+            with mock.patch("subprocess.run"):
+                gui._ensure_secure_watch_dir(watch_dir)
+
+            values = {
+                "firstname": "Test",
+                "middlename": "",
+                "lastname": "Dummy",
+                "dob": "1990-01-01",
+                "ssn": "000-00-0000",
+                "address": "123 Fake St",
+                "city": "Nowhere",
+                "state": "ZZ",
+                "zip": "00000",
+                "country": "US",
+                "phone": "555-0100",
+                "email": "test.dummy@example.com",
+                "cc": "4111111111111111",
+                "expmonth": "12",
+                "expyear": "30",
+                "cvv": "000",
+                "brand": "Visa",
+            }
+            source = write_hq_file(values, watch_dir)
+            self.assertTrue(source.name.startswith("HQ-"))
+            self.assertEqual(source.parent, watch_dir)
+
+            queued = sorted(
+                f for f in watch_dir.glob("HQ-*") if f.is_file() and f.suffix in {".txt", ".rtf"}
+            )
+            self.assertEqual(queued, [source])
+
+            output = watch_dir / "out.json"
+            result = BitwardenConverter(source, output, "shared-pass").run()
+            self.assertEqual(result["items_generated"], 3)
+            self.assertEqual(result["employees"][0]["username"], "testdummy1990")
 
 
 class AssistHelpersTests(unittest.TestCase):

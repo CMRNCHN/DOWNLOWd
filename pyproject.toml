@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "provision"
-version = "0.3.0"
+version = "0.3.1"
 description = "An automated tool for employee onboarding tasks, including account creation and data import."
 authors = [
   { name="Cameron Cohen", email="cameron@example.com" },

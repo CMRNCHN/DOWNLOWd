@@ -65,7 +65,51 @@ from secure_delete import (
 )
 from transaction_db import TransactionDatabase
 
-DOWNLOADS = Path.home() / "Downloads"
+# Intake watch folder: a locked-down subfolder of Downloads rather than
+# Downloads itself, since it transiently holds unshredded employee PII
+# (SSN, card numbers, DOB) between drop-off and pipeline disposal.
+DOWNLOADS = Path.home() / "Downloads" / "Secure Downloads"
+
+
+def _ensure_secure_watch_dir(path: Path = DOWNLOADS) -> Path:
+    """Create/harden the HQ-file watch folder.
+
+    Best-effort, idempotent, and safe to call repeatedly: owner-only
+    permissions, refuses to reuse a symlink at that path (swap-attack
+    protection), and — on macOS — excludes the folder from Spotlight
+    indexing and Time Machine backups. None of this is required for the
+    pipeline to function; it only reduces how long/widely sensitive intake
+    files are exposed before disposal.
+    """
+    try:
+        if path.is_symlink():
+            logging.warning("Watch dir %s is a symlink; replacing it.", path)
+            path.unlink()
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path, 0o700)
+    except OSError as exc:
+        logging.warning("Could not create/harden watch dir %s: %s", path, exc)
+        return path
+
+    sentinel = path / ".metadata_never_index"
+    if not sentinel.exists():
+        try:
+            sentinel.write_text("")
+        except OSError:
+            pass
+
+    if sys.platform == "darwin":
+        try:
+            subprocess.run(
+                ["tmutil", "addexclusion", str(path)],
+                capture_output=True,
+                check=False,
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+    return path
 
 # shadcn-inspired neutral palette on the cool "slate" base: white cards,
 # hairline borders, a single near-black primary, muted secondaries. Keys match
@@ -1094,7 +1138,7 @@ class Dashboard(ttk.Frame):
         )
 
         self.workflow_step = tk.StringVar(value="ready")
-        self.status = tk.StringVar(value="Watching Downloads for HQ files…")
+        self.status = tk.StringVar(value="Watching Downloads/Secure Downloads for HQ files…")
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.step_labels: Dict[str, tk.Label] = {}
         self._pipeline_running = False
@@ -1114,6 +1158,7 @@ class Dashboard(ttk.Frame):
         self._sheet_close_callback: Optional[Callable[[], None]] = None
         self._budget_queue: List[Dict[str, Any]] = []
 
+        _ensure_secure_watch_dir()
         self._build()
         self._bind_assist_hotkeys()
         self._configure_logging()
@@ -2525,7 +2570,7 @@ class Dashboard(ttk.Frame):
         self._open_sheet(
             "Manual employee",
             build,
-            subtitle="Same fields as an HQ export · saves HQ-*.txt to Downloads",
+            subtitle="Same fields as an HQ export · saves HQ-*.txt to Downloads/Secure Downloads",
         )
 
     def _on_drop(self, event: Any) -> None:
@@ -3024,7 +3069,7 @@ class Dashboard(ttk.Frame):
         queued = self._queued_employee_files()
         if not queued:
             if not quiet:
-                self.status.set("Nothing queued — drop HQ-*.txt / HQ-*.rtf into Downloads")
+                self.status.set("Nothing queued — drop HQ-*.txt / HQ-*.rtf into Downloads/Secure Downloads")
             return
         passphrase = self._resolve_passphrase()
         if not passphrase:
