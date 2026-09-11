@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional
 
 CREDENTIALS_FILE = Path.home() / ".onboarding_credentials.json"
 SECURE_CREDENTIALS_FILE = Path.home() / ".provision" / "credentials.json"
-KEYRING_SERVICE = "PROVISION"
 
 APP_PASSWORD_HASH_KEY = "app_password_hash"
 APP_PASSWORD_SALT_KEY = "app_password_salt"

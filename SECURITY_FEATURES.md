@@ -6,10 +6,11 @@ Security controls for application and Bitwarden authentication, local settings, 
 
 ## Features
 
-### 1. macOS Keychain Integration
+### 1. Local Credential Store
 
-- Credentials stored via `keyring` under service `PROVISION`
-- On first run after upgrade, plaintext `~/.onboarding_credentials.json` is migrated into Keychain
+- Settings and the remembered Bitwarden email are stored as JSON at `~/.provision/credentials.json`, inside a `0o700` directory, written via a temp-file-then-atomic-replace and `chmod 0o600` on every save
+- **Not Keychain-backed** — an earlier build used macOS Keychain via `keyring`, but unsigned `.app` launches trigger a Keychain "allow access" prompt on every read, so the store was switched to a plain permission-guarded file. There is no OS-level secret gate on this file beyond standard Unix file permissions
+- On first run after upgrade, plaintext `~/.onboarding_credentials.json` is migrated into this store
 - After a successful migration the source file is **securely overwritten and deleted** (no `.json.backup` left behind)
 - If migration fails mid-way, the original file is left intact and an error is logged
 
@@ -76,7 +77,7 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 
 | Path | Role |
 |------|------|
-| `integrations.py` | Keychain settings and Bitwarden CLI gateway |
+| `integrations.py` | Local credential store and Bitwarden CLI gateway |
 | `onboarding.py` | Pipeline orchestrator |
 | `bw_import_converter.py` | HQ → Bitwarden JSON (single converter source) |
 | `transaction_db.py` | SQLite transactions |
@@ -87,7 +88,6 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 
 ## Dependencies
 
-- `keyring>=24.0.0`
 - `requests`, `selenium`, `msal`, `tkinterdnd2-universal` (DnD optional; falls back on Python builds without Tk DnD)
 - **No** `pysqlcipher` / SQLCipher in this release
 

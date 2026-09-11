@@ -5,7 +5,7 @@ An automated desktop tool for streamlining new employee onboarding tasks. The ap
 ## Security Features
 
 - **Bitwarden unlock** — workspace opens after Bitwarden master password login/unlock (no separate app password)
-- **macOS Keychain** — stores settings and remembered Bitwarden email
+- **Local credential store** — settings and remembered Bitwarden email in a chmod-600 JSON file under `~/.provision/` (not Keychain-backed — unsigned `.app` launches would trigger a Keychain permission prompt on every read)
 - **Transaction Logging** — local SQLite with owner-only (`0o600`) permissions — **not encrypted at rest** (FileVault recommended)
 - **Local disposal modes** — standard unlink, overwrite-then-delete, or best-effort secure erase (APFS/SSD: FileVault is the real protection)
 - **Automated Data Retention** — 5/10/15/20 day lifecycle

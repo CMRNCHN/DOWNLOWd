@@ -15,14 +15,14 @@ non-obvious caveats for running it here.
   (Tkinter) is required and is baked into the VM image — it is a system dep, not a pip dep, so it is not
   in the update script. If `import tkinter` fails, reinstall it with `sudo apt-get install -y python3-tk`.
 - Run the GUI with a display: `DISPLAY=:1 .venv/bin/python run.py`. Without `DISPLAY` it cannot open a window.
-- `keyring` has **no working backend** on this headless Linux (no Secret Service / gnome-keyring). The app
-  tolerates this (it catches `KeyringError`), but settings such as the shared passphrase, remembered
-  Bitwarden email, and vault-collection name **do not persist across launches**. Re-enter them in
-  **Settings** during each session.
+- Settings (shared passphrase, remembered Bitwarden email, vault-collection name) persist to a chmod-600
+  JSON file at `~/.provision/credentials.json` — there is no Keychain/`keyring` dependency to worry about,
+  and persistence works identically on this headless Linux VM as it does on macOS.
 
 ### Tests / lint / build
-- Tests: `.venv/bin/python -m unittest discover -s tests -v` (41 tests, all mocked — no Bitwarden or
-  display needed). They run in well under a second.
+- Tests: `.venv/bin/python -m unittest discover -s tests -v` (the full suite, mostly mocked — no Bitwarden
+  needed; a handful of GUI smoke tests do instantiate real Tk widgets and need a display). They run in
+  well under a few seconds.
 - Lint: no linter is configured in this repo. Use `.venv/bin/python -m py_compile *.py tests/*.py` as a
   syntax smoke check.
 - Build: `build.sh` produces a macOS `.app`/`.pkg` via PyInstaller + `pkgbuild` and **only works on macOS**;

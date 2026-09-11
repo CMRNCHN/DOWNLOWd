@@ -12,7 +12,6 @@ authors = [
 license = "MIT"
 requires-python = ">=3.8"
 dependencies = [
-    "keyring>=24.0.0",
     "cryptography>=42.0.0",
     "requests>=2.31.0",
     "selenium>=4.15.0",
