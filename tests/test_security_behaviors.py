@@ -975,7 +975,14 @@ class AssistHelpersTests(unittest.TestCase):
             self.assertIsNotNone(arg)
             self.assertTrue(arg.startswith("--load-extension="))
             self.assertIn(str(installed), arg)
-            args = profile.launch_args("https://example.com", install_extensions=False)
+            # launch_args() only needs a Chrome binary path to build the
+            # argument list; don't depend on one actually being installed
+            # on whatever machine runs this test.
+            with mock.patch(
+                "chrome_ops_profile.find_chrome_binary",
+                return_value="/usr/bin/google-chrome-stable",
+            ):
+                args = profile.launch_args("https://example.com", install_extensions=False)
             self.assertTrue(any(a.startswith("--load-extension=") for a in args))
             self.assertTrue(
                 any("DisableLoadExtensionCommandLineSwitch" in a for a in args)

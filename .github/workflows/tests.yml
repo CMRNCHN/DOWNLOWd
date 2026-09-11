@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system Tk + Xvfb
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+
+      - name: Install dependencies
+        run: python -m pip install -e .
+
+      - name: Syntax check
+        run: python -m py_compile *.py tests/*.py
+
+      - name: Start virtual display
+        # xvfb-run -a hangs unpredictably in some containerized environments
+        # (reproduced locally under Docker); start Xvfb directly instead.
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 &
+          sleep 2
+
+      - name: Run tests
+        env:
+          DISPLAY: ":99"
+        run: timeout 120 python -m unittest discover -s tests -v
