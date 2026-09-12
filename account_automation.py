@@ -53,6 +53,23 @@ ASSIST_FIELD_LABELS: Dict[str, str] = {
     "username": "Username",
 }
 
+# Per-service "Next field" walkthrough order — independent of the ⌘1-6
+# hotkey contract above, which stays fixed regardless of service so the
+# same keystroke always pastes the same field. This only controls what
+# "Next field"/"Back" step to next, to match the order a given signup
+# form actually asks for fields in (e.g. Outlook wants email+password
+# before name). Services not listed here fall back to ASSIST_FIELD_KEYS.
+ASSIST_FIELD_WALK_ORDER: Dict[str, Tuple[str, ...]] = {
+    "Outlook": (
+        "email",
+        "password",
+        "confirm_password",
+        "first_name",
+        "last_name",
+        "postal",
+    ),
+}
+
 _BOT_MARKERS = (
     "e6020",
     "access denied",

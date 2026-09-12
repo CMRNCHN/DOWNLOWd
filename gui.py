@@ -39,6 +39,7 @@ except Exception:
 from account_automation import (
     ASSIST_FIELD_KEYS,
     ASSIST_FIELD_LABELS,
+    ASSIST_FIELD_WALK_ORDER,
     assist_field_value,
     arrange_windows_for_assist,
     copy_to_clipboard,
@@ -2683,14 +2684,19 @@ class Dashboard(ttk.Frame):
         self._assist_event.set()
 
     def _assist_current_fields(self) -> List[str]:
+        # "Next field" walks in the order the target site's form actually
+        # asks for fields (per service); ⌘1-6 still always paste the same
+        # field regardless, since those hotkeys are bound to
+        # ASSIST_FIELD_KEYS directly and don't go through this method.
+        order = ASSIST_FIELD_WALK_ORDER.get(self._assist_service, ASSIST_FIELD_KEYS)
         keys: List[str] = []
-        for key in ASSIST_FIELD_KEYS:
+        for key in order:
             value = assist_field_value(self._assist_personal, key)
             if key == "email" and self._assist_service == "Outlook" and not value:
                 value = assist_field_value(self._assist_personal, "username")
             if value:
                 keys.append(key)
-        return keys or list(ASSIST_FIELD_KEYS)
+        return keys or list(order)
 
     def _refresh_assist_companion(self) -> None:
         win = self._assist_window

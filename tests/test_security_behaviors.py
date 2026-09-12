@@ -15,6 +15,7 @@ import onboarding
 import data_retention
 from account_automation import (
     ASSIST_FIELD_KEYS,
+    ASSIST_FIELD_WALK_ORDER,
     AccountCreator,
     format_assist_payload,
     normalize_personal_data,
@@ -910,6 +911,48 @@ class QueuedFilesStatusTests(unittest.TestCase):
             with mock.patch.object(gui, "DOWNLOADS", watch_dir):
                 dashboard._refresh_queued_files()
         dashboard.status.set.assert_called_with("No files queued")
+
+
+class AssistWalkthroughOrderTests(unittest.TestCase):
+    """The (Command-1) through (Command-6) hotkeys always paste the same
+    field regardless of service (bound directly to ASSIST_FIELD_KEYS), but
+    "Next field" should walk in the order the target site's form actually
+    asks for fields — e.g. Outlook wants email+password before name.
+    """
+
+    def test_outlook_walks_email_and_password_before_name(self):
+        dashboard = Dashboard.__new__(Dashboard)
+        dashboard._assist_service = "Outlook"
+        dashboard._assist_personal = {
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@example.com",
+            "username": "",
+            "password": "hunter2",
+            "confirm_password": "hunter2",
+            "postal": "12345",
+        }
+        self.assertEqual(
+            dashboard._assist_current_fields(),
+            ["email", "password", "confirm_password", "first_name", "last_name", "postal"],
+        )
+
+    def test_unlisted_service_falls_back_to_hotkey_order(self):
+        dashboard = Dashboard.__new__(Dashboard)
+        dashboard._assist_service = "Hyatt"
+        dashboard._assist_personal = {
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@example.com",
+            "password": "hunter2",
+            "confirm_password": "hunter2",
+            "postal": "12345",
+        }
+        self.assertEqual(list(dashboard._assist_current_fields()), list(ASSIST_FIELD_KEYS))
+
+    def test_walk_order_only_overrides_navigation_not_the_hotkey_contract(self):
+        self.assertEqual(ASSIST_FIELD_KEYS[0], "first_name")
+        self.assertEqual(ASSIST_FIELD_WALK_ORDER["Outlook"][0], "email")
 
 
 class AssistHelpersTests(unittest.TestCase):
