@@ -16,6 +16,10 @@ VERSION=$(grep '^version' pyproject.toml | sed -e 's/version = //' -e 's/"//g')
 echo "--- Bundling ${APP_NAME}.app with PyInstaller ---"
 
 PYI_ARGS=(--name "$APP_NAME" --windowed --noconfirm)
+# Not Python — PyInstaller won't pick this up on its own. Bundled at the
+# same relative path chrome_ops_profile.py looks it up at
+# (Path(__file__).resolve().parent / "autofill_extension").
+PYI_ARGS+=(--add-data "$ROOT/autofill_extension:autofill_extension")
 if [[ -f "$ROOT/assets/icon.icns" ]]; then
   PYI_ARGS+=(--icon "$ROOT/assets/icon.icns")
 else

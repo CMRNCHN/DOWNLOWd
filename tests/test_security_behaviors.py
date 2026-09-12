@@ -1156,6 +1156,84 @@ class AssistHelpersTests(unittest.TestCase):
                 any("DisableLoadExtensionCommandLineSwitch" in a for a in args)
             )
 
+
+class AutofillHandoffTests(unittest.TestCase):
+    """The Field Autofill extension gets an employee's field values via a
+    chrome-extension://<id>/handoff.html?data=<base64 json> URL opened as
+    an extra tab. These tests decode that URL the same way handoff.js does
+    (base64 -> UTF-8 JSON) and check its shape, without needing a browser.
+    """
+
+    def _decode(self, url: str) -> dict:
+        import base64 as b64
+        import urllib.parse as up
+
+        parsed = up.urlparse(url)
+        query = up.parse_qs(parsed.query)
+        encoded = query["data"][0]
+        return json.loads(b64.b64decode(encoded).decode("utf-8"))
+
+    def test_outlook_handoff_url_carries_expected_fields_and_site_names(self):
+        from account_automation import AUTOFILL_EXTENSION_ID, build_autofill_handoff_url
+
+        url = build_autofill_handoff_url(
+            "Outlook",
+            {
+                "full_name": "Ada Lovelace",
+                "first_name": "Ada",
+                "last_name": "Lovelace",
+                "email": "ada@example.com",
+                "password": "hunter2",
+                "confirm_password": "hunter2",
+                "postal": "12345",
+            },
+        )
+        self.assertIsNotNone(url)
+        self.assertTrue(url.startswith(f"chrome-extension://{AUTOFILL_EXTENSION_ID}/handoff.html?data="))
+        profile = self._decode(url)
+        self.assertEqual(profile["service"], "Outlook")
+        self.assertEqual(profile["employee_name"], "Ada Lovelace")
+        self.assertEqual(profile["fields"]["email"], "ada@example.com")
+        self.assertEqual(profile["fields"]["password"], "hunter2")
+        # loginfmt/i0116/email are all Outlook's real field names for the
+        # email data key, per SITE_AUTOFILL_SPECS.
+        self.assertEqual(profile["site_field_names"]["loginfmt"], "email")
+        self.assertEqual(profile["site_field_names"]["i0116"], "email")
+
+    def test_unknown_service_returns_none(self):
+        from account_automation import build_autofill_handoff_url
+
+        self.assertIsNone(build_autofill_handoff_url("SomeOtherService", {"email": "a@b.com"}))
+
+    def test_no_usable_field_data_returns_none(self):
+        from account_automation import build_autofill_handoff_url
+
+        self.assertIsNone(build_autofill_handoff_url("Outlook", {}))
+
+    def test_extension_files_exist_and_id_matches_manifest_key(self):
+        """Regression guard: if manifest.json's key ever changes, the
+        hardcoded AUTOFILL_EXTENSION_ID must be recomputed to match, or
+        every handoff URL points at the wrong (or a nonexistent) extension.
+        """
+        import base64 as b64
+        import hashlib
+
+        from chrome_ops_profile import AUTOFILL_EXTENSION_DIR, AUTOFILL_EXTENSION_ID
+
+        self.assertTrue((AUTOFILL_EXTENSION_DIR / "manifest.json").exists())
+        self.assertTrue((AUTOFILL_EXTENSION_DIR / "content.js").exists())
+        self.assertTrue((AUTOFILL_EXTENSION_DIR / "handoff.html").exists())
+        self.assertTrue((AUTOFILL_EXTENSION_DIR / "handoff.js").exists())
+
+        manifest = json.loads((AUTOFILL_EXTENSION_DIR / "manifest.json").read_text(encoding="utf-8"))
+        pub_der = b64.b64decode(manifest["key"])
+        digest = hashlib.sha256(pub_der).digest()
+        computed_id = "".join(
+            chr(ord("a") + (byte >> 4)) + chr(ord("a") + (byte & 0xF)) for byte in digest[:16]
+        )
+        self.assertEqual(computed_id, AUTOFILL_EXTENSION_ID)
+
+
 class BitwardenItemApiTests(unittest.TestCase):
     def test_create_item_encodes_payload_without_writing_it_to_disk(self):
         service = BitwardenService()

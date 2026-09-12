@@ -57,19 +57,28 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 - Session is cleared on failed unlock/login
 - Named organization collections must resolve exactly; lookup failures do not fall back to Personal Vault
 
-### 7. Secure Intake Watch Folder
+### 7. Field Autofill Extension
+
+- A locally-bundled (not Chrome Web Store) MV3 extension registered into the Ops Chrome profile alongside the downloaded ones, via the same BiDi `webextension.install` mechanism (`autofill_extension/`)
+- Purpose: offers to fill signup fields the Bitwarden extension's own autofill doesn't reach (first/last name, confirm password, zip) — closes the gap the manual ⌘1–⌘6 copy/paste assist keymap exists to work around
+- Its content script only runs on the three known partner domains declared in its manifest (`signup.live.com`, `hyatt.com`, `marriott.com`) — no `<all_urls>` access, no other permissions beyond `storage`
+- Per-employee field values reach it via a `chrome-extension://<fixed-id>/handoff.html?data=<base64 json>` page opened as an extra tab — never written to a file, never sent over the network; the handoff page stores it into `chrome.storage.local` and immediately closes itself
+- The stored profile expires after 20 minutes even if never consumed
+- Fills only on explicit click (per-field "Fill" button, or a "Fill all matched" action) and never touches submit/CAPTCHA elements — same "operator completes and submits" boundary as the rest of the assisted-signup flow
+
+### 8. Secure Intake Watch Folder
 
 - HQ files are watched/queued from `~/Downloads/Secure Downloads`, not `~/Downloads` itself — a subfolder the app creates and hardens on launch, since it transiently holds unshredded employee PII (SSN, card numbers, DOB) between drop-off and pipeline disposal
 - Directory permissions are set/enforced to owner-only (`0o700`); a symlink found at that path is refused and replaced rather than followed (swap-attack protection)
 - Excluded from Spotlight indexing (`.metadata_never_index` sentinel) and, on macOS, from Time Machine backups (`tmutil addexclusion`)
 - Best-effort only: these are local-permission/indexing controls, not encryption — FileVault remains the real at-rest protection, same as the other local stores in this document
 
-### 8. Secure Temporary Files
+### 9. Secure Temporary Files
 
 - Import temp files under `~/.provision_temp/` (`0o700` dir, `0o600` files)
 - Multi-pass overwrite before unlink
 
-### 9. Bitwarden-Synced Employee Profiles
+### 10. Bitwarden-Synced Employee Profiles
 
 - Versioned, owner-only metadata at `~/.provision_profiles.json`, keyed by immutable employee UUID
 - Local records contain display metadata and vault item references only—never passwords, card numbers, CVVs, SSNs, or DOB
@@ -113,6 +122,7 @@ Logged events include: authentication, imports, deletions, transaction add/delet
 
 ## Version
 
+- **0.4.0** — Field Autofill browser extension (fills signup fields beyond username/password); fixed a dead status-bar update, a Finder AppleScript crash, and the assist walkthrough's fixed field order
 - **0.3.1** — Intake watch folder moved from `~/Downloads` to a hardened `~/Downloads/Secure Downloads` subfolder (owner-only permissions, Spotlight/Time Machine excluded)
 - **0.3.0** — Renamed from DOWNLOWd to Provision; PIN unlock hardened with failed-attempt lockout and a stronger, versioned KDF
 - **0.2.2** — Selenium partner prefill, tracked day-20 logs, FileVault launch warning, Python 3.14 Tk DnD fallback

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Provision Field Autofill",
+  "version": "1.0.0",
+  "description": "Offers to fill signup form fields (beyond username/password) from the current HQ upload's profile. Never submits a form.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnnNx8vt9mcYIsOlqkKdiNnbwsFU2qNo42JSMOu4X9WxFEs48VoS7M0HD8pD7OwrNm865cyoc5mPJDIBaFrSn1fLUy5FGdfWlBMOUeu94C6IdOL6XA2nj2du++PJ4qmizELXAPw0hSef4pKK3WFKOsIpW0u3tPpDgLwuQx1FXBLXnvSEbnDrF0apybDAGvHXJm0E8pStTZXZnsYLtusR6hGtxnUbayn03KWkPF+K7d0zK4VB39kDc9qOUmusAaWdo0u39SexlF/Ie+Cg2lt8bXuZzi252eLakMI8CmdoOQcnFkce4fXc77HrcAc53lFn/PGBh5EAv53f0IjigZJDJrQIDAQAB",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://signup.live.com/*",
+        "https://www.hyatt.com/*",
+        "https://www.marriott.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

@@ -27,6 +27,13 @@ EXTENSIONS_ROOT = Path.home() / ".provision" / "chrome-ops-extensions"
 BROWSERS_ROOT = Path.home() / ".provision" / "browsers"
 SETUP_PAGE_NAME = "provision-ops-setup.html"
 
+# Bundled locally (not a Chrome Web Store download) — offers to fill signup
+# fields beyond username/password (first/last name, confirm password, zip)
+# from the current HQ upload's profile. Its manifest.json pins a fixed
+# "key" so this ID never changes between installs.
+AUTOFILL_EXTENSION_DIR = Path(__file__).resolve().parent / "autofill_extension"
+AUTOFILL_EXTENSION_ID = "foaankopggdjlaapajooefllicncigjp"
+
 # Chrome Web Store IDs — account creation + identity / fingerprint protection.
 # auto_install=False keeps a store link for MV2-only / unavailable packages.
 RECOMMENDED_EXTENSIONS: Tuple[Dict[str, Any], ...] = (
@@ -579,6 +586,8 @@ class ChromeOpsProfile:
                             row["detail"] = "MV2 — skipped BiDi register; use Chrome Web Store"
                     continue
                 register_paths.append(path)
+            if (AUTOFILL_EXTENSION_DIR / "manifest.json").exists():
+                register_paths.append(AUTOFILL_EXTENSION_DIR)
 
         bidi: Dict[str, Any] = {"ok": True, "detail": "already registered", "installs": []}
         if register_paths:
@@ -886,6 +895,17 @@ class ChromeOpsProfile:
         return {"ok": True, "removed": removed, "profile": str(self.root)}
 
 
-def open_ops_browser(url: str, *, setup_if_needed: bool = False) -> Dict[str, Any]:
-    """Public helper used by account handoff."""
-    return ChromeOpsProfile().open_urls([url], setup_if_needed=setup_if_needed)
+def open_ops_browser(
+    url: str,
+    *,
+    setup_if_needed: bool = False,
+    extra_urls: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """Public helper used by account handoff.
+
+    extra_urls open as additional tabs ahead of `url` — used to hand a
+    per-employee autofill profile to the Field Autofill extension via its
+    handoff page before the real signup page loads.
+    """
+    urls = [*(extra_urls or ()), url]
+    return ChromeOpsProfile().open_urls(urls, setup_if_needed=setup_if_needed)

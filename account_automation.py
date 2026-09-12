@@ -5,15 +5,23 @@ payload, and macOS paste helpers for an in-app field palette (Keysmith-ready).
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 import subprocess
 import sys
+import urllib.parse
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Any, Dict, List, Optional, Tuple
 
-from chrome_ops_profile import ChromeOpsProfile, find_chrome_binary, open_ops_browser
+from chrome_ops_profile import (
+    AUTOFILL_EXTENSION_ID,
+    ChromeOpsProfile,
+    find_chrome_binary,
+    open_ops_browser,
+)
 
 try:
     from selenium import webdriver
@@ -677,7 +685,12 @@ class AccountCreator:
         opened = False
         launched: Dict[str, Any] = {"ok": True, "detail": "Deferred to assist browser."}
         if not self.defer_browser_open:
-            launched = open_ops_browser(signup_url, setup_if_needed=True)
+            handoff_url = build_autofill_handoff_url(service, personal_data)
+            launched = open_ops_browser(
+                signup_url,
+                setup_if_needed=True,
+                extra_urls=[handoff_url] if handoff_url else None,
+            )
             if launched.get("ok"):
                 opened = True
             else:
@@ -715,8 +728,9 @@ class AccountCreator:
             "message": message
             or (
                 "Opened signup in the Provision Ops Chrome profile. "
-                "Use Bitwarden Auto-fill on the TEMP item, or Paste from the companion. "
-                "Complete captcha and submit yourself."
+                "Bitwarden Auto-fill handles username/password on the TEMP item; "
+                "look for green \"Fill\" buttons next to other fields, or Paste from "
+                "the companion. Complete captcha and submit yourself."
                 if opened
                 else "Signup ready. Use the assist keymap (⌘1–⌘6) to fill fields "
                 "in the browser. Complete captcha and submit yourself."
@@ -1049,6 +1063,43 @@ SITE_AUTOFILL_SPECS: Dict[str, Dict[str, Any]] = {
         ],
     },
 }
+
+# Fields the Field Autofill extension's content script knows how to offer.
+# Beyond username/password (which the Bitwarden extension already autofills
+# via the TEMP item above), this covers the fields that actually needed the
+# manual copy/paste assist keymap: name, confirm password, zip.
+AUTOFILL_HANDOFF_FIELDS: Tuple[str, ...] = (
+    "first_name",
+    "last_name",
+    "email",
+    "username",
+    "password",
+    "confirm_password",
+    "postal",
+)
+
+
+def build_autofill_handoff_url(service: str, personal_data: Dict[str, str]) -> Optional[str]:
+    """Build a chrome-extension://.../handoff.html URL carrying this
+    employee's field values to the Field Autofill extension. Returns None
+    for services with no autofill spec — nothing to hand off.
+    """
+    spec = SITE_AUTOFILL_SPECS.get(service)
+    if not spec:
+        return None
+    data = normalize_personal_data(personal_data)
+    fields = {key: data.get(key, "") for key in AUTOFILL_HANDOFF_FIELDS if data.get(key)}
+    if not fields:
+        return None
+    site_field_names = {name: data_key for name, data_key, _type in spec["custom_fields"]}
+    profile = {
+        "service": service,
+        "employee_name": data.get("full_name") or data.get("first_name") or "",
+        "fields": fields,
+        "site_field_names": site_field_names,
+    }
+    encoded = base64.b64encode(json.dumps(profile).encode("utf-8")).decode("ascii")
+    return f"chrome-extension://{AUTOFILL_EXTENSION_ID}/handoff.html?data={urllib.parse.quote(encoded, safe='')}"
 
 
 def build_temp_autofill_payload(
