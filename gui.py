@@ -2463,17 +2463,24 @@ class Dashboard(ttk.Frame):
         )
 
     def _refresh_queued_files(self) -> None:
-        if not hasattr(self, "queue_list"):
-            return
+        # queue_list was part of an earlier layout and no longer exists in
+        # the current UI; the status bar is the only place this feedback is
+        # visible now, so it must not be gated behind that dead widget.
         queued = self._queued_employee_files()
-        self.queue_list.delete(0, tk.END)
-        if queued:
+        if hasattr(self, "queue_list"):
+            self.queue_list.delete(0, tk.END)
             for f in queued:
                 self.queue_list.insert(tk.END, f.name)
-            self.status.set(f"{len(queued)} file(s) queued")
-            self._set_step("intake", f"{len(queued)} ready")
+            if not queued:
+                self.queue_list.insert(tk.END, "No HQ files queued")
+        if queued:
+            names = ", ".join(f.name for f in queued[:3])
+            if len(queued) > 3:
+                names += f", +{len(queued) - 3} more"
+            # _set_step() also writes self.status — call it last so its
+            # summary is what's actually shown, but keep it informative.
+            self._set_step("intake", f"{len(queued)} ready — {names}")
         else:
-            self.queue_list.insert(tk.END, "No HQ files queued")
             self.status.set("No files queued")
 
     def _browse_files(self, _event: tk.Event | None = None):

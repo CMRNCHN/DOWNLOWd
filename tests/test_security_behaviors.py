@@ -878,6 +878,40 @@ class SecureWatchDirTests(unittest.TestCase):
             self.assertEqual(result["employees"][0]["username"], "testdummy1990")
 
 
+class QueuedFilesStatusTests(unittest.TestCase):
+    """_refresh_queued_files() used to silently no-op: it early-returned
+    behind `if not hasattr(self, "queue_list")`, and queue_list is never
+    actually created anywhere in the current UI. The status bar
+    (self.status) is the only visible feedback left, so it must update
+    regardless of that dead widget.
+    """
+
+    def test_status_bar_reports_queued_files_without_queue_list_widget(self):
+        dashboard = Dashboard.__new__(Dashboard)
+        dashboard.status = mock.Mock()
+        dashboard.workflow_step = mock.Mock()
+        self.assertFalse(hasattr(dashboard, "queue_list"))
+        with tempfile.TemporaryDirectory() as directory:
+            watch_dir = Path(directory) / "Secure Downloads"
+            watch_dir.mkdir()
+            (watch_dir / "HQ-one.txt").write_text("x", encoding="utf-8")
+            with mock.patch.object(gui, "DOWNLOADS", watch_dir):
+                dashboard._refresh_queued_files()
+        status_text = dashboard.status.set.call_args[0][0]
+        self.assertIn("HQ-one.txt", status_text)
+        self.assertIn("1", status_text)
+
+    def test_status_bar_reports_no_files_queued(self):
+        dashboard = Dashboard.__new__(Dashboard)
+        dashboard.status = mock.Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            watch_dir = Path(directory) / "Secure Downloads"
+            watch_dir.mkdir()
+            with mock.patch.object(gui, "DOWNLOADS", watch_dir):
+                dashboard._refresh_queued_files()
+        dashboard.status.set.assert_called_with("No files queued")
+
+
 class AssistHelpersTests(unittest.TestCase):
     def test_normalize_personal_data_fills_aliases(self):
         data = normalize_personal_data(

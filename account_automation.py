@@ -225,9 +225,6 @@ def arrange_windows_for_assist(
     browsers = browser_apps or ["Google Chrome", "Safari", "Microsoft Edge", "Arc"]
     browser_list = ", ".join(f'"{name}"' for name in browsers)
     script = f'''
-tell application "System Events"
-  set screenW to item 1 of (size of (first window of process "Finder" whose role description is "window"))
-end tell
 try
   tell application "Finder"
     set screenBounds to bounds of window of desktop
